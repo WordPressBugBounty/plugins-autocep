@@ -1,144 +1,155 @@
 jQuery(function ($) {
-  var AECEP = {
-    initialize: function () {
-      var self = this;
-      self.bindEvents();
-      self.initializeAddressFields();
+  const AECEP = {
+    selectors: {
+      checkoutForm: "form.checkout",
+      billing: {
+        postcode: "#billing_postcode",
+        address1: "#billing_address_1",
+      },
+      shipping: {
+        postcode: "#shipping_postcode",
+        address1: "#shipping_address_1",
+      },
     },
 
-    bindEvents: function () {
-      var self = this;
+    debounceTimer: null,
+
+    init() {
+      this.bindEvents();
+      this.autoFillIfNeeded();
+
+      setTimeout(() => {
+        this.autoFillIfNeeded();
+      }, 800);
+    },
+
+    bindEvents() {
+      const self = this;
+
+      $(document.body).off("input.autocep");
+      $(document).off("updated_checkout.autocep");
 
       $(document.body).on(
-        'input',
-        '#billing_postcode, #shipping_postcode',
+        "input.autocep",
+        "#billing_postcode, #shipping_postcode",
         function () {
-          var section = $(this).attr('id').includes('billing')
-            ? 'billing'
-            : 'shipping';
-          self.fillAddress(section);
-        },
+          clearTimeout(self.debounceTimer);
+
+          const section = this.id.includes("billing")
+            ? "billing"
+            : "shipping";
+
+          self.debounceTimer = setTimeout(() => {
+            self.fillAddress(section);
+          }, 500);
+        }
       );
 
-      $(document).on('updated_checkout', function () {
-        self.bindEvents();
+      $(document).on("updated_checkout.autocep", () => {
+        self.autoFillIfNeeded();
       });
     },
 
-    initializeAddressFields: function () {
-      var self = this;
-      var $billingPostcode = $('#billing_postcode');
-      var $shippingPostcode = $('#shipping_postcode');
-      var $billingAddress1 = $('#billing_address_1');
-      var $shippingAddress1 = $('#shipping_address_1');
+    autoFillIfNeeded() {
+      ["billing", "shipping"].forEach((section) => {
+        const $postcode = $(this.selectors[section].postcode);
+        const $address1 = $(this.selectors[section].address1);
 
-      if ($billingPostcode.val() && !$billingAddress1.val()) {
-        self.fillAddress('billing');
-      }
-      if ($shippingPostcode.val() && !$shippingAddress1.val()) {
-        self.fillAddress('shipping');
-      }
+        if (
+          $postcode.length &&
+          $postcode.val() &&
+          !$address1.val()
+        ) {
+          this.fillAddress(section);
+        }
+      });
     },
 
-    showLoading: function () {
-      var $form = $('form.checkout');
+    showLoading() {
+      const $form = $(this.selectors.checkoutForm);
       if ($form.length) {
         $form.block({
           message: null,
           overlayCSS: {
-            background: '#fff',
+            background: "#fff",
             opacity: 0.6,
           },
         });
-      } else {
-        console.error('O formulário de checkout não foi encontrado.');
       }
     },
 
-    hideLoading: function () {
-      var $form = $('form.checkout');
-      if ($form.length) {
-        $form.unblock();
-      } else {
-        console.error('O formulário de checkout não foi encontrado.');
-      }
+    hideLoading() {
+      $(this.selectors.checkoutForm).unblock();
     },
 
-    fillAddress: function (section, applyToBoth) {
-      var self = this;
-      applyToBoth = applyToBoth || false;
+    fillAddress(section, applyToBoth = false) {
+      const $country = $(`#${section}_country`);
 
-      var $countryField = $('#' + section + '_country');
-      var country = $countryField.val();
+      if ($country.length && $country.val() !== "BR") return;
 
-      if (!$countryField.length || country === 'BR') {
-        var $postalCodeField = $('#' + section + '_postcode');
-        var postalCode = $postalCodeField.val().replace(/\D/g, '');
+      const $postcodeField = $(`#${section}_postcode`);
+      const cep = $postcodeField.val().replace(/\D/g, "");
 
-        if (postalCode && postalCode.length === 8) {
-          $postalCodeField.blur();
-          self.showLoading();
+      if (cep.length !== 8) return;
 
-          $.ajax({
-            type: 'POST',
-            url: autocep_params.ajax_url,
-            data: {
-              action: 'autocep_get_address',
-              cep: postalCode,
-              nonce: autocep_params.nonce,
-            },
-            dataType: 'json',
-            success: function (response) {
-              if (response.success) {
-                self.populateFields(section, response.data);
-                if (applyToBoth) {
-                  var otherSection =
-                    section === 'billing' ? 'shipping' : 'billing';
-                  self.populateFields(otherSection, response.data);
-                }
-              } else {
-                console.warn(
-                  response.data.message ||
-                    'Erro desconhecido ao buscar o endereço.',
-                );
-              }
-            },
-            error: function (jqXHR, textStatus, errorThrown) {
-              console.error(
-                'Erro ao buscar o endereço. Status: ' +
-                  textStatus +
-                  ', Erro: ' +
-                  errorThrown,
-              );
-            },
-            complete: function () {
-              self.hideLoading();
-            },
-          });
-        }
-      }
+      this.showLoading();
+      $postcodeField.blur();
+
+      $.ajax({
+        type: "POST",
+        url: autocep_params.ajax_url,
+        dataType: "json",
+        data: {
+          action: "autocep_get_address",
+          cep,
+          nonce: autocep_params.nonce,
+        },
+      })
+        .done((response) => {
+          if (!response.success) return;
+
+          this.populateFields(section, response.data);
+
+          if (applyToBoth) {
+            const other =
+              section === "billing" ? "shipping" : "billing";
+            this.populateFields(other, response.data);
+          }
+        })
+        .always(() => {
+          this.hideLoading();
+        });
     },
 
-    populateFields: function (section, data) {
-      $('#' + section + '_address_1')
+    populateFields(section, data) {
+      $(`#${section}_address_1`)
         .val(data.logradouro)
         .change();
-      $('#' + section + '_neighborhood').length
-        ? $('#' + section + '_neighborhood')
-            .val(data.bairro)
-            .change()
-        : $('#' + section + '_address_2')
-            .val(data.bairro)
-            .change();
-      $('#' + section + '_city')
+
+      const $neighborhood = $(`#${section}_neighborhood`);
+      ($neighborhood.length
+        ? $neighborhood
+        : $(`#${section}_address_2`)
+      )
+        .val(data.bairro)
+        .change();
+
+      $(`#${section}_city`)
         .val(data.localidade)
         .change();
-      $('#' + section + '_state')
+
+      $(`#${section}_state`)
         .val(data.uf)
-        .trigger('change')
-        .change();
+        .trigger("change");
     },
   };
 
-  AECEP.initialize();
+  AECEP.init();
+
+  $(document.body).on(
+    "updated_checkout wc_fragments_loaded",
+    () => {
+      AECEP.autoFillIfNeeded();
+    }
+  );
 });

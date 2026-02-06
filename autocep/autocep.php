@@ -2,7 +2,7 @@
 /*
 * Plugin Name: AutoCEP
 * Description: Preenche automaticamente o endereço no checkout com base no CEP digitado.
-* Version: 1.0
+* Version: 1.5
 * Author: TESW | Dev Wanderson Cesar
 * Author URI: https://tesw.com.br
 * Text Domain: autocep
