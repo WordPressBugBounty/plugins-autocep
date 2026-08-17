@@ -1,0 +1,312 @@
+/**
+ * AutoCEP - Estilos de front-end
+ *
+ * Estilos das caixas de simulação de frete (produto, carrinho e
+ * checkout): compactos, modernos e responsivos, desenhados para se
+ * encaixar bem em qualquer tema WooCommerce sem parecer um elemento
+ * estranho à loja.
+ *
+ * As cores usadas no campo de CEP e no botão "Calcular" são controladas
+ * pelas variáveis CSS abaixo, com valores padrão neutros. Quando o
+ * lojista personaliza as cores em AutoCEP > Aparência, o plugin injeta
+ * um bloco `:root { --autocep-... }` que sobrescreve esses valores.
+ */
+
+.autocep-shipping-box {
+    box-sizing: border-box;
+    max-width: 280px;
+    margin: 10px 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 6px rgba(0, 0, 0, 0.04);
+}
+
+.autocep-shipping-box * {
+    box-sizing: border-box;
+}
+
+.autocep-shipping-title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0 0 7px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #6b6b6b;
+}
+
+.autocep-shipping-title::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z'/%3E%3C/svg%3E") center / contain no-repeat;
+    opacity: 0.55;
+}
+
+.autocep-shipping-form {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.autocep-shipping-box .autocep-shipping-cep-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 34px;
+    margin: 0 !important;
+    padding: 0 10px !important;
+    border: 1px solid var(--autocep-field-border, #d8d8d8) !important;
+    border-radius: 7px !important;
+    background-color: var(--autocep-field-bg, #fff) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    font-size: 12px !important;
+    line-height: normal !important;
+    color: var(--autocep-field-text, #333) !important;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.autocep-shipping-box .autocep-shipping-cep-input:focus {
+    outline: none !important;
+    border-color: var(--autocep-button-bg, #1e1e1e) !important;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08) !important;
+}
+
+.autocep-shipping-box .autocep-shipping-cep-input::placeholder {
+    color: #999 !important;
+    opacity: 1 !important;
+}
+
+.autocep-shipping-box .autocep-shipping-calc-btn {
+    flex: 0 0 auto;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 34px;
+    margin: 0 !important;
+    padding: 0 14px !important;
+    border: none !important;
+    border-radius: 7px !important;
+    background-color: var(--autocep-button-bg, #1e1e1e) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-button-text, #fff) !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    line-height: normal !important;
+    /* Sem letter-spacing: espaçar as letras adiciona espaço também
+       depois da última, o que empurra o texto visualmente para a
+       esquerda mesmo estando centralizado — é isso que fazia o texto
+       "CALCULAR" parecer torto dentro do botão. */
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.autocep-shipping-box .autocep-shipping-calc-btn:hover,
+.autocep-shipping-box .autocep-shipping-calc-btn:focus {
+    background-color: var(--autocep-button-hover-bg, #333) !important;
+    color: var(--autocep-button-text, #fff) !important;
+    outline: none !important;
+}
+
+.autocep-shipping-feedback {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #767676;
+    min-height: 14px;
+}
+
+.autocep-shipping-results {
+    margin-top: 4px;
+    animation: autocep-fade-in 0.18s ease-out;
+}
+
+.autocep-shipping-rates-list {
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid #eee;
+}
+
+.autocep-shipping-rate-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 2px;
+    border-bottom: 1px solid #eee;
+    font-size: 12px;
+    transition: background-color 0.1s ease-in-out;
+}
+
+.autocep-shipping-rate-item:last-child {
+    border-bottom: none;
+}
+
+.autocep-shipping-rate-item:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.autocep-shipping-rate-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.autocep-shipping-rate-label {
+    color: #333;
+    line-height: 1.3;
+}
+
+.autocep-shipping-rate-cost {
+    font-weight: 700;
+    font-size: 12px;
+    color: #1a7d36;
+    white-space: nowrap;
+}
+
+.autocep-shipping-box .autocep-shipping-select-btn {
+    flex: 0 0 auto;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 4px 9px !important;
+    border: 1px solid var(--autocep-button-bg, #1e1e1e) !important;
+    border-radius: 6px !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-button-bg, #1e1e1e) !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    line-height: normal !important;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out;
+}
+
+.autocep-shipping-box .autocep-shipping-select-btn:hover,
+.autocep-shipping-box .autocep-shipping-select-btn:focus {
+    background-color: var(--autocep-button-bg, #1e1e1e) !important;
+    color: var(--autocep-button-text, #fff) !important;
+    outline: none !important;
+}
+
+.autocep-shipping-empty {
+    margin: 0;
+    font-size: 11px;
+    color: #b00020;
+}
+
+.autocep-shipping-cep-link {
+    margin: 6px 0 0;
+    text-align: center;
+}
+
+.autocep-shipping-cep-link a {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--autocep-button-bg, #1e1e1e);
+    opacity: 0.75;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: opacity 0.15s ease-in-out;
+}
+
+.autocep-shipping-cep-link a:hover {
+    opacity: 1;
+}
+
+/* Aviso exibido no checkout quando o CEP é válido mas não possui uma
+   rua específica cadastrada — cidade e estado são preenchidos, mas o
+   cliente precisa digitar o endereço manualmente. */
+.autocep-no-street-notice {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: #996800;
+}
+
+/* Aviso de erro exibido junto ao campo de CEP do checkout quando o
+   valor é inválido ou não é encontrado nas APIs (antes falhava
+   silenciosamente, sem nenhuma indicação para o cliente). */
+.autocep-cep-feedback-notice {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: #b00020;
+}
+
+@keyframes autocep-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Estado de carregamento (fallback para navegadores sem jQuery.blockUI).
+   Genérico: aplica-se tanto às caixas de frete quanto aos campos de
+   endereço do checkout durante o autocompletar por CEP. */
+.autocep-loading {
+    position: relative;
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.autocep-loading::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 18px;
+    height: 18px;
+    margin: -9px 0 0 -9px;
+    border: 2.5px solid #ddd;
+    border-top-color: var(--autocep-button-bg, #666);
+    border-radius: 50%;
+    animation: autocep-spin 0.7s linear infinite;
+    z-index: 2;
+}
+
+@keyframes autocep-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Respeita a preferência do sistema por menos animação. */
+@media (prefers-reduced-motion: reduce) {
+    .autocep-shipping-results,
+    .autocep-loading::after {
+        animation: none;
+    }
+}
+
+/* Responsividade em telas pequenas */
+@media (max-width: 480px) {
+    .autocep-shipping-box {
+        max-width: 100%;
+    }
+}
+
