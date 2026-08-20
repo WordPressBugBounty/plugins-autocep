@@ -148,6 +148,13 @@ jQuery(function ($) {
         // "Endereço" pode voltar a ficar vazio e precisa ser preenchido de novo.
         MIN_RETRY_INTERVAL_MS: 3000,
 
+        // IDs mais comuns usados por temas/plugins brasileiros (ex.:
+        // WooCommerce Extra Checkout Fields for Brazil, Correios, temas
+        // nacionais) para o campo dedicado de "Bairro" no checkout.
+        // Usados para detectar automaticamente um campo real de Bairro
+        // antes de recorrer ao Complemento como alternativa.
+        neighborhoodFieldSuffixes: ['neighborhood', 'district', 'bairro'],
+
         // Controle por seção (billing/shipping): "fetching" impede
         // disparar uma nova requisição enquanto outra já está em
         // andamento; "lastCep" identifica se o CEP mudou (para liberar
@@ -390,19 +397,60 @@ jQuery(function ($) {
             $('<span class="' + noticeClass + '" role="alert"></span>').text(mensagem).appendTo($wrapper);
         },
 
+        /**
+         * Localiza o campo que deve receber o Bairro para a seção
+         * informada.
+         *
+         * Ordem de prioridade:
+         *  1. Um campo dedicado de Bairro já existente no checkout (ex.:
+         *     "billing_neighborhood"), detectado automaticamente. Isso
+         *     evita que o Bairro seja jogado no Complemento quando já
+         *     existe um campo próprio para ele — o que deixava o Bairro
+         *     real vazio e impedia plugins de frete que dependem desse
+         *     campo (ex.: cálculo por bairro/zona local) de encontrar
+         *     opções de entrega.
+         *  2. O campo configurado manualmente em AutoCEP > Geral & Busca
+         *     de CEP ("Campo do Bairro"), caso exista na página.
+         *  3. O campo "Complemento" (comportamento legado, usado apenas
+         *     quando o checkout não possui nenhum campo dedicado de
+         *     Bairro).
+         *
+         * @param {string} section "billing" ou "shipping".
+         *
+         * @return {jQuery}
+         */
+        findNeighborhoodField: function (section) {
+            for (var i = 0; i < this.neighborhoodFieldSuffixes.length; i++) {
+                var $auto = $('#' + section + '_' + this.neighborhoodFieldSuffixes[i]);
+
+                if ($auto.length) {
+                    return $auto;
+                }
+            }
+
+            var neighborhoodField = params.general.neighborhood_field;
+
+            if (neighborhoodField) {
+                // O campo de bairro configurado no admin normalmente segue
+                // o padrão "billing_xxx"; adaptamos o prefixo para
+                // "shipping_" quando estivermos preenchendo a seção de
+                // entrega.
+                var targetField = neighborhoodField.replace(/^billing_/, section + '_').replace(/^shipping_/, section + '_');
+                var $configurado = $('#' + targetField);
+
+                if ($configurado.length) {
+                    return $configurado;
+                }
+            }
+
+            return $('#' + section + '_address_2');
+        },
+
         populateFields: function (section, data) {
             var $address1 = $('#' + section + '_address_1');
             $address1.val(data.logradouro).change();
 
-            var neighborhoodField = params.general.neighborhood_field || (section + '_address_2');
-
-            // O campo de bairro configurado no admin normalmente segue o
-            // padrão "billing_xxx"; adaptamos o prefixo para "shipping_"
-            // quando estivermos preenchendo a seção de entrega.
-            var targetField = neighborhoodField.replace(/^billing_/, section + '_').replace(/^shipping_/, section + '_');
-
-            var $neighborhood = $('#' + targetField);
-            (($neighborhood.length ? $neighborhood : $('#' + section + '_address_2')))
+            this.findNeighborhoodField(section)
                 .val(data.bairro)
                 .change();
 

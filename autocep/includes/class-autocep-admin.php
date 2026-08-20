@@ -69,7 +69,10 @@ class AutoCEP_Admin
                     'brasilapi' => array('enabled' => 1, 'priority' => 2),
                     'apicep'    => array('enabled' => 1, 'priority' => 3),
                 ),
-                'neighborhood_field'   => 'billing_address_2',
+                // Vazio = detecção automática (prioriza um campo dedicado
+                // de Bairro já existente no checkout, ex.: "billing_neighborhood";
+                // só usa o Complemento se nenhum campo desses for encontrado).
+                'neighborhood_field'   => '',
                 'auto_focus'           => 1,
                 'cache_days'           => 30,
                 'browser_autocomplete' => 1,
@@ -250,7 +253,7 @@ class AutoCEP_Admin
         }, $page, 'autocep_general_checkout');
 
         add_settings_field('neighborhood_field', __('Campo do Bairro', 'autocep'), function () {
-            $this->render_text('general', 'neighborhood_field', __('ID do campo do WooCommerce que deve receber o bairro (ex.: billing_address_2, billing_neighborhood).', 'autocep'));
+            $this->render_text('general', 'neighborhood_field', __('Opcional. O AutoCEP detecta automaticamente um campo dedicado de Bairro já existente no checkout (ex.: billing_neighborhood) e só usa o Complemento (address_2) se nenhum for encontrado. Preencha este campo apenas se quiser forçar um ID específico (ex.: billing_address_2, billing_neighborhood).', 'autocep'));
         }, $page, 'autocep_general_checkout');
 
         add_settings_field('browser_autocomplete', __('Autocompletar do Navegador', 'autocep'), function () {

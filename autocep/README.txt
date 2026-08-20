@@ -5,7 +5,7 @@ Tags: woocommerce, checkout, cep, endereço, frete
 Requires at least: 5.0
 Tested up to: 7.0.3
 Requires PHP: 7.4
-Stable tag: 2.3.5
+Stable tag: 2.3.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -13,7 +13,7 @@ Autocompletar CEP no checkout do WooCommerce e simular frete em tempo real — p
 
 == Descrição ==
 
-https://youtu.be/CygVGP-LUJg
+https://youtu.be/YnDT_qNIH1w
 
 **AutoCEP** resolve dois problemas clássicos de qualquer loja WooCommerce: fazer o cliente **preencher o endereço automaticamente ao digitar o CEP** e **mostrar o valor do frete antes de chegar ao checkout** — na página do produto, no carrinho e no próprio checkout.
 
@@ -181,6 +181,9 @@ GPLv2 ou posterior.
 * **Site**: https://tesw.com.br/plugins/
 
 == Changelog ==
+
+= 2.3.6 =
+* Corrigido problema no checkout onde o Bairro era preenchido incorretamente no campo Complemento e deixava o Bairro vazio, impedindo o cálculo de frete.
 
 = 2.3.5 =
 * Vídeo demonstrativo (https://youtu.be/CygVGP-LUJg) adicionado no topo da Descrição do README, no formato que o WordPress.org converte automaticamente em player incorporado.

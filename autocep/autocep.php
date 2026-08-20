@@ -3,7 +3,7 @@
  * Plugin Name: AutoCEP
  * Plugin URI: https://tesw.com.br/plugins/
  * Description: Autocompletar endereço por CEP e simulador de frete completo para WooCommerce — produto, carrinho e checkout — com múltiplas APIs, cache, fallback automático, compatível com Fluid Checkout, CartFlows, Melhor Envio, Frenet e mais.
- * Version: 2.3.5
+ * Version: 2.3.6
  * Author: TESW | Dev Wanderson Cesar
  * Author URI: https://tesw.com.br
  * Text Domain: autocep
