@@ -148,13 +148,6 @@ jQuery(function ($) {
         // "Endereço" pode voltar a ficar vazio e precisa ser preenchido de novo.
         MIN_RETRY_INTERVAL_MS: 3000,
 
-        // IDs mais comuns usados por temas/plugins brasileiros (ex.:
-        // WooCommerce Extra Checkout Fields for Brazil, Correios, temas
-        // nacionais) para o campo dedicado de "Bairro" no checkout.
-        // Usados para detectar automaticamente um campo real de Bairro
-        // antes de recorrer ao Complemento como alternativa.
-        neighborhoodFieldSuffixes: ['neighborhood', 'district', 'bairro'],
-
         // Controle por seção (billing/shipping): "fetching" impede
         // disparar uma nova requisição enquanto outra já está em
         // andamento; "lastCep" identifica se o CEP mudou (para liberar
@@ -397,60 +390,42 @@ jQuery(function ($) {
             $('<span class="' + noticeClass + '" role="alert"></span>').text(mensagem).appendTo($wrapper);
         },
 
-        /**
-         * Localiza o campo que deve receber o Bairro para a seção
-         * informada.
-         *
-         * Ordem de prioridade:
-         *  1. Um campo dedicado de Bairro já existente no checkout (ex.:
-         *     "billing_neighborhood"), detectado automaticamente. Isso
-         *     evita que o Bairro seja jogado no Complemento quando já
-         *     existe um campo próprio para ele — o que deixava o Bairro
-         *     real vazio e impedia plugins de frete que dependem desse
-         *     campo (ex.: cálculo por bairro/zona local) de encontrar
-         *     opções de entrega.
-         *  2. O campo configurado manualmente em AutoCEP > Geral & Busca
-         *     de CEP ("Campo do Bairro"), caso exista na página.
-         *  3. O campo "Complemento" (comportamento legado, usado apenas
-         *     quando o checkout não possui nenhum campo dedicado de
-         *     Bairro).
-         *
-         * @param {string} section "billing" ou "shipping".
-         *
-         * @return {jQuery}
-         */
-        findNeighborhoodField: function (section) {
-            for (var i = 0; i < this.neighborhoodFieldSuffixes.length; i++) {
-                var $auto = $('#' + section + '_' + this.neighborhoodFieldSuffixes[i]);
-
-                if ($auto.length) {
-                    return $auto;
-                }
-            }
-
-            var neighborhoodField = params.general.neighborhood_field;
-
-            if (neighborhoodField) {
-                // O campo de bairro configurado no admin normalmente segue
-                // o padrão "billing_xxx"; adaptamos o prefixo para
-                // "shipping_" quando estivermos preenchendo a seção de
-                // entrega.
-                var targetField = neighborhoodField.replace(/^billing_/, section + '_').replace(/^shipping_/, section + '_');
-                var $configurado = $('#' + targetField);
-
-                if ($configurado.length) {
-                    return $configurado;
-                }
-            }
-
-            return $('#' + section + '_address_2');
-        },
-
         populateFields: function (section, data) {
             var $address1 = $('#' + section + '_address_1');
             $address1.val(data.logradouro).change();
 
-            this.findNeighborhoodField(section)
+            // Tenta primeiro os IDs de campo de bairro mais comuns entre
+            // os plugins de endereço brasileiro para WooCommerce (ex.:
+            // "Brazilian Market on WooCommerce" usa "billing_neighborhood").
+            // Só cai para o campo configurado no admin (que por padrão é
+            // "billing_address_2" = Complemento) se a loja não tiver
+            // nenhum desses campos dedicados — evita que o bairro seja
+            // escrito por engano no campo de Complemento quando já existe
+            // um campo de Bairro de verdade na página, mesmo que a opção
+            // "Campo do Bairro" nunca tenha sido customizada no admin.
+            var candidatosPadrao = ['neighborhood', 'bairro', 'district'];
+            var targetField = null;
+
+            for (var i = 0; i < candidatosPadrao.length; i++) {
+                var idCandidato = section + '_' + candidatosPadrao[i];
+
+                if ($('#' + idCandidato).length) {
+                    targetField = idCandidato;
+                    break;
+                }
+            }
+
+            if (!targetField) {
+                var neighborhoodField = params.general.neighborhood_field || (section + '_address_2');
+
+                // O campo de bairro configurado no admin normalmente segue o
+                // padrão "billing_xxx"; adaptamos o prefixo para "shipping_"
+                // quando estivermos preenchendo a seção de entrega.
+                targetField = neighborhoodField.replace(/^billing_/, section + '_').replace(/^shipping_/, section + '_');
+            }
+
+            var $neighborhood = $('#' + targetField);
+            (($neighborhood.length ? $neighborhood : $('#' + section + '_address_2')))
                 .val(data.bairro)
                 .change();
 
@@ -613,6 +588,7 @@ jQuery(function ($) {
 
                     $feedback.empty();
                     renderRates($results, response.data.rates);
+                    updateFreeShippingBar($box, response.data.free_shipping_bar_html);
                 })
                 .fail(function () {
                     $feedback.text(params.messages.generic_error);
@@ -721,6 +697,15 @@ jQuery(function ($) {
                 .done(function (response) {
                     if (!response || !response.success) {
                         $feedback.text((response && response.data && response.data.message) || params.messages.generic_error);
+
+                        // Sem opções: limpa o frete da sessão para o
+                        // resumo nativo não mostrar um frete de outro CEP.
+                        $.post(params.ajax_url, {
+                            action: 'autocep_clear_selected_rate',
+                            nonce: params.nonce,
+                        });
+
+                        renderRates($results, []);
                         return;
                     }
 
@@ -731,6 +716,15 @@ jQuery(function ($) {
                             self.selectRate($box, cep, rateId, contexto);
                         },
                     });
+                    updateFreeShippingBar($box, response.data.free_shipping_bar_html);
+
+                    // Aviso abaixo das opções no carrinho.
+                    if ('cart' === contexto && response.data.rates && response.data.rates.length) {
+                        $results.append(
+                            $('<p class="autocep-shipping-select-hint" />')
+                                .text(params.messages.select_to_apply || 'Selecione uma opção acima para aplicar o frete ao seu pedido.')
+                        );
+                    }
                 })
                 .fail(function () {
                     $feedback.text(params.messages.generic_error);
@@ -904,6 +898,32 @@ jQuery(function ($) {
     };
 
     /**
+     * Atualiza (ou remove) a Barra de Progresso de Frete Grátis dentro de
+     * uma caixa de simulação, a partir do HTML já pronto devolvido pelo
+     * servidor (`free_shipping_bar_html` na resposta AJAX) — recalculado
+     * com a zona correta assim que o cliente simula um CEP específico.
+     *
+     * @param {jQuery} $box Caixa de simulação (produto, carrinho ou checkout).
+     * @param {string} [html] HTML da barra, ou undefined/vazio para removê-la.
+     */
+    function updateFreeShippingBar($box, html) {
+        var $wrap = $box.find('.autocep-free-shipping-bar-wrap');
+
+        if (!html) {
+            $wrap.remove();
+            return;
+        }
+
+        if ($wrap.length) {
+            $wrap.html(html);
+        } else {
+            $box.find('.autocep-shipping-title').first().after(
+                $('<div class="autocep-free-shipping-bar-wrap" />').html(html)
+            );
+        }
+    }
+
+    /**
      * Renderiza a lista de taxas de frete retornadas pelo servidor.
      *
      * @param {jQuery}  $container Elemento onde a lista será inserida.
@@ -926,8 +946,41 @@ jQuery(function ($) {
             var $item = $('<li class="autocep-shipping-rate-item" />');
             var $info = $('<span class="autocep-shipping-rate-info" />');
             $info.append($('<span class="autocep-shipping-rate-label" />').text(rate.label));
+
+            // Previsão de Entrega com data real (ex.: "Chega entre
+            // Quarta-feira (25/10) e Sexta-feira (27/10)"), quando o
+            // recurso estiver habilitado em AutoCEP > Conversão & Vendas.
+            if (rate.delivery_estimate) {
+                $info.append($('<span class="autocep-shipping-rate-delivery" />').text(rate.delivery_estimate));
+            }
+
             $info.append($('<span class="autocep-shipping-rate-cost" />').html(rate.cost_formatted));
             $item.append($info);
+
+            // Retirada em Loja por Proximidade: exibe um link "Ver
+            // instruções" que expande o endereço/instruções cadastrados
+            // para aquela loja específica, sem poluir a lista quando
+            // fechado.
+            if (rate.pickup_instructions) {
+                var $instrucoesTexto = $('<p class="autocep-shipping-rate-instructions-text" />')
+                    .text(rate.pickup_instructions)
+                    .hide();
+
+                var $toggle = $('<a href="#" class="autocep-shipping-rate-instructions-toggle" />')
+                    .text(params.messages.view_instructions || 'Ver instruções')
+                    .on('click', function (evento) {
+                        evento.preventDefault();
+                        $instrucoesTexto.toggle();
+                        $(this).text(
+                            $instrucoesTexto.is(':visible')
+                                ? (params.messages.hide_instructions || 'Ocultar instruções')
+                                : (params.messages.view_instructions || 'Ver instruções')
+                        );
+                    });
+
+                $item.append($toggle);
+                $item.append($instrucoesTexto);
+            }
 
             if (opcoes.selectable) {
                 $item.append(

@@ -1,33 +1,15 @@
 <?php
-/**
- * Classe responsável pelo motor de cálculo de frete.
- *
- * @package AutoCEP
- */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
-/**
- * Renderiza e processa os simuladores de frete da página de produto e
- * do checkout, consultando dinamicamente as Zonas de Entrega do
- * WooCommerce configuradas pela loja.
- */
 class AutoCEP_Shipping
 {
-    /**
-     * Instância do logger.
-     *
-     * @var AutoCEP_Logger
-     */
+    const CACHE_PREFIX = 'autocep_ship_';
+
     private $logger;
 
-    /**
-     * Construtor.
-     *
-     * @param AutoCEP_Logger $logger Instância do logger do plugin.
-     */
     public function __construct(AutoCEP_Logger $logger)
     {
         $this->logger = $logger;
@@ -44,24 +26,92 @@ class AutoCEP_Shipping
         add_action('wp_ajax_autocep_select_shipping_rate', array($this, 'ajax_select_shipping_rate'));
         add_action('wp_ajax_nopriv_autocep_select_shipping_rate', array($this, 'ajax_select_shipping_rate'));
 
+        add_action('wp_ajax_autocep_clear_selected_rate', array($this, 'ajax_clear_selected_rate'));
+        add_action('wp_ajax_nopriv_autocep_clear_selected_rate', array($this, 'ajax_clear_selected_rate'));
+
+        add_action('wp_ajax_autocep_update_shipping_cep', array($this, 'ajax_update_shipping_cep'));
+        add_action('wp_ajax_nopriv_autocep_update_shipping_cep', array($this, 'ajax_update_shipping_cep'));
+
         add_action('init', array($this, 'register_display_hooks'));
 
-        // Compatibilidade retroativa: o antigo plugin "Calculadora de Frete
-        // na Página do Produto" usava o shortcode [shipping_calculator_on_product_page]
-        // para posicionar a caixa manualmente dentro da descrição do produto.
-        // Registrando o mesmo shortcode aqui, qualquer conteúdo que já o
-        // utilize (ex.: descrições antigas) volta a funcionar automaticamente,
-        // sem precisar editar produto por produto.
+        add_filter('woocommerce_package_rates', array($this, 'inject_autonomous_rates'), 20, 2);
+
         add_shortcode('shipping_calculator_on_product_page', array($this, 'render_shipping_calculator_shortcode'));
     }
 
-    /**
-     * Registra os hooks de exibição das caixas de frete (produto,
-     * carrinho e checkout) de acordo com a posição escolhida no painel
-     * administrativo.
-     *
-     * @return void
-     */
+    public function inject_autonomous_rates($rates, $package)
+    {
+        $cep_destino = isset($package['destination']['postcode'])
+            ? preg_replace('/\D/', '', $package['destination']['postcode'])
+            : '';
+
+        if (empty($cep_destino)) {
+            return $rates;
+        }
+
+        if (class_exists('AutoCEP_Km_Delivery')) {
+            $id_km = 'autocep_km_delivery';
+
+            if (!isset($rates[$id_km])) {
+                $taxa_km = AutoCEP_Km_Delivery::calculate($cep_destino);
+
+                if ($taxa_km !== null) {
+                    $rates[$id_km] = new WC_Shipping_Rate(
+                        $id_km,
+                        $taxa_km['label'],
+                        $taxa_km['cost'],
+                        array(),
+                        'autocep_km_delivery'
+                    );
+                }
+            }
+        }
+
+        if (class_exists('AutoCEP_Store_Pickup')) {
+            $lojas_proximas = AutoCEP_Store_Pickup::get_nearby_stores($cep_destino);
+
+            foreach ($lojas_proximas as $loja) {
+                $rate_id = 'autocep_store_pickup_fallback_' . $loja['id'];
+
+                $ja_tem = false;
+                foreach ($rates as $rate) {
+                    if (strpos($rate->get_id(), 'autocep_store_pickup') === 0) {
+                        $ja_tem = true;
+                        break;
+                    }
+                }
+                if ($ja_tem) {
+                    break;
+                }
+
+                if (!isset($rates[$rate_id])) {
+                    $gratis = empty($loja['pickup_fee']) || (float) $loja['pickup_fee'] <= 0;
+
+                    if (null === $loja['distance_km']) {
+                        $label = $gratis
+                            ? sprintf(__('Retire Grátis na %s', 'autocep'), $loja['name'])
+                            : sprintf(__('Retire na %s', 'autocep'), $loja['name']);
+                    } else {
+                        $dist = number_format((float) $loja['distance_km'], 1, ',', '.');
+                        $label = $gratis
+                            ? sprintf(__('Retire Grátis na %1$s (a %2$s km de você)', 'autocep'), $loja['name'], $dist)
+                            : sprintf(__('Retire na %1$s (a %2$s km de você)', 'autocep'), $loja['name'], $dist);
+                    }
+
+                    $rates[$rate_id] = new WC_Shipping_Rate(
+                        $rate_id,
+                        $label,
+                        (float) $loja['pickup_fee'],
+                        array(),
+                        'autocep_store_pickup'
+                    );
+                }
+            }
+        }
+
+        return $rates;
+    }
+
     public function register_display_hooks()
     {
         if (!class_exists('WooCommerce')) {
@@ -70,10 +120,6 @@ class AutoCEP_Shipping
 
         $options = AutoCEP_Admin::get_options();
 
-        // Evita duplicidade visual com plugins de transportadora que também
-        // inserem sua própria caixa de frete na página de produto (ex.:
-        // Melhor Envio): quando o simulador do AutoCEP está habilitado,
-        // desliga a caixa nativa deles automaticamente.
         $this->sync_third_party_product_calculators(!empty($options['product_shipping']['enabled']));
 
         if (!empty($options['product_shipping']['enabled'])) {
@@ -81,11 +127,6 @@ class AutoCEP_Shipping
                 ? $options['product_shipping']['hook']
                 : 'woocommerce_after_add_to_cart_form';
 
-            // Quando a posição escolhida é "shortcode", a caixa não é
-            // anexada automaticamente a nenhum hook: ela só aparece onde o
-            // shortcode [shipping_calculator_on_product_page] for inserido
-            // manualmente (na descrição do produto, por exemplo), evitando
-            // que a caixa apareça duplicada na página.
             if ('shortcode' !== $hook) {
                 add_action($hook, array($this, 'render_product_shipping_box'));
             }
@@ -108,13 +149,6 @@ class AutoCEP_Shipping
         }
     }
 
-    /**
-     * Callback do shortcode legado [shipping_calculator_on_product_page].
-     * Renderiza a mesma caixa de simulação de frete usada nos hooks
-     * automáticos, permitindo posicionamento manual dentro do conteúdo.
-     *
-     * @return string
-     */
     public function render_shipping_calculator_shortcode()
     {
         if (!function_exists('is_product') || !is_product()) {
@@ -133,31 +167,8 @@ class AutoCEP_Shipping
         return ob_get_clean();
     }
 
-    /**
-     * Evita que a caixa de simulação de frete do AutoCEP apareça
-     * duplicada na página de produto junto com a caixa nativa de
-     * plugins de transportadora que também se inserem automaticamente
-     * ali (ex.: Melhor Envio).
-     *
-     * Quando o simulador de produto do AutoCEP está habilitado, a caixa
-     * nativa dessas integrações é desligada via a própria opção que
-     * elas já oferecem para isso — a cotação real continua funcionando
-     * normalmente, pois ela é feita através das Zonas de Entrega do
-     * WooCommerce (métodos de frete), não pela caixa em si. Se o
-     * simulador do AutoCEP for desligado, a caixa nativa volta a
-     * aparecer automaticamente.
-     *
-     * @param bool $autocep_habilitado Se o simulador de produto do AutoCEP está ativo.
-     *
-     * @return void
-     */
     private function sync_third_party_product_calculators($autocep_habilitado)
     {
-        // Melhor Envio (plugin oficial "melhor-envio-cotacao"): expõe a
-        // opção "melhorenvio_hide_calculator_product" para ligar/desligar
-        // sua própria calculadora na página de produto. Definir com o
-        // valor "1" a desliga; removê-la (delete_option) restaura o
-        // comportamento padrão do plugin.
         if (defined('MELHORENVIO_ASSETS') || class_exists('Melhor_Envio_Plugin')) {
             $opcao = 'melhorenvio_hide_calculator_product';
 
@@ -171,21 +182,12 @@ class AutoCEP_Shipping
         }
     }
 
-    /**
-     * Imprime o HTML da caixa de simulação de frete na página de produto.
-     *
-     * @return void
-     */
     public function render_product_shipping_box()
     {
         global $product;
 
         $produto_atual = $product instanceof WC_Product ? $product : null;
 
-        // Fallback: quando a caixa é renderizada via shortcode legado em
-        // contextos onde o global $product ainda não foi configurado
-        // (ex.: alguns construtores de página), tenta resolver o produto
-        // pelo ID da página/post atual.
         if (!$produto_atual && function_exists('get_the_ID')) {
             $produto_atual = wc_get_product(get_the_ID());
         }
@@ -199,9 +201,14 @@ class AutoCEP_Shipping
             ? $options['product_shipping']['title']
             : __('Calcular Frete e Prazo', 'autocep');
 
+        $barra_frete_gratis = $this->render_free_shipping_bar_html((float) $produto_atual->get_price());
+
         ?>
         <div class="autocep-shipping-box autocep-shipping-box--product" data-product-id="<?php echo esc_attr($produto_atual->get_id()); ?>">
             <p class="autocep-shipping-title"><strong><?php echo esc_html($titulo); ?></strong></p>
+            <?php if ($barra_frete_gratis) : ?>
+                <div class="autocep-free-shipping-bar-wrap"><?php echo $barra_frete_gratis; ?></div>
+            <?php endif; ?>
             <div class="autocep-shipping-form">
                 <input
                     type="text"
@@ -221,11 +228,6 @@ class AutoCEP_Shipping
         <?php
     }
 
-    /**
-     * Imprime o HTML da caixa de simulação de frete na página do carrinho.
-     *
-     * @return void
-     */
     public function render_cart_shipping_box()
     {
         $options = AutoCEP_Admin::get_options();
@@ -236,32 +238,22 @@ class AutoCEP_Shipping
         $this->print_cart_or_checkout_box('cart', $titulo);
     }
 
-    /**
-     * Imprime o HTML da caixa de simulação de frete no checkout.
-     *
-     * @return void
-     */
     public function render_checkout_shipping_box()
     {
         $this->print_cart_or_checkout_box('checkout', __('Simular Frete', 'autocep'));
     }
 
-    /**
-     * Imprime o markup compartilhado das caixas de frete baseadas no
-     * conteúdo do carrinho (usada tanto na página do carrinho quanto no
-     * checkout — a única diferença entre elas é a classe CSS, usada pelo
-     * JavaScript para acionar a ação AJAX correta de cada contexto).
-     *
-     * @param string $contexto "cart" ou "checkout".
-     * @param string $titulo   Título exibido no topo da caixa.
-     *
-     * @return void
-     */
     private function print_cart_or_checkout_box($contexto, $titulo)
     {
+        $subtotal_atual     = (function_exists('WC') && WC()->cart) ? (float) WC()->cart->get_subtotal() : 0.0;
+        $barra_frete_gratis = $this->render_free_shipping_bar_html($subtotal_atual);
+
         ?>
         <div class="autocep-shipping-box autocep-shipping-box--<?php echo esc_attr($contexto); ?>">
             <p class="autocep-shipping-title"><strong><?php echo esc_html($titulo); ?></strong></p>
+            <?php if ($barra_frete_gratis) : ?>
+                <div class="autocep-free-shipping-bar-wrap"><?php echo $barra_frete_gratis; ?></div>
+            <?php endif; ?>
             <div class="autocep-shipping-form">
                 <input
                     type="text"
@@ -278,24 +270,6 @@ class AutoCEP_Shipping
         <?php
     }
 
-    /**
-     * Garante que o carrinho, a sessão e o cliente do WooCommerce
-     * (`WC()->cart`, `WC()->session`, `WC()->customer`) estejam
-     * totalmente inicializados antes de calcular ou aplicar frete.
-     *
-     * Isto é necessário porque nossas rotas AJAX passam por
-     * `admin-ajax.php` (via `wp_ajax_`/`wp_ajax_nopriv_`), que — ao
-     * contrário do endpoint próprio do WooCommerce (`wc-ajax`) — não
-     * garante esses objetos prontos para um visitante anônimo que ainda
-     * não interagiu com o carrinho. Sem isso, integrações de frete de
-     * terceiros que dependem de `WC()->cart`/`WC()->session`
-     * internamente (ex.: Melhor Envio, Frenet) podem lançar exceção ou
-     * falhar somente para visitantes não autenticados — mesmo
-     * funcionando normalmente para um usuário logado, cuja sessão já
-     * está sempre disponível.
-     *
-     * @return void
-     */
     private function ensure_wc_cart_session()
     {
         if (function_exists('wc_load_cart')) {
@@ -303,13 +277,6 @@ class AutoCEP_Shipping
         }
     }
 
-    /**
-     * Handler AJAX: calcula o frete a partir da página de produto
-     * (antes de o item estar no carrinho), considerando a quantidade
-     * selecionada quando a opção estiver habilitada.
-     *
-     * @return void
-     */
     public function ajax_calc_shipping_product()
     {
         check_ajax_referer(AUTOCEP_NONCE_ACTION, 'nonce');
@@ -322,7 +289,6 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('Simulador de frete desabilitado.', 'autocep')));
         }
 
-        // Se a loja tiver o cálculo de frete desabilitado globalmente, não há o que simular.
         if ('no' === get_option('woocommerce_calc_shipping')) {
             wp_send_json_error(array('message' => __('O cálculo de frete está desabilitado nesta loja.', 'autocep')));
         }
@@ -336,14 +302,12 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('CEP inválido.', 'autocep')));
         }
 
-        // Valida o CEP também com o validador nativo do WooCommerce, considerando o país base da loja.
         $pais_base = WC()->countries ? WC()->countries->get_base_country() : 'BR';
 
         if (class_exists('WC_Validation') && !WC_Validation::is_postcode($cep, $pais_base)) {
             wp_send_json_error(array('message' => __('Por favor, insira um CEP válido.', 'autocep')));
         }
 
-        // Resolve a variação selecionada (produtos variáveis) ou o produto simples.
         $product = $this->resolve_requested_product($product_id, $variation_id);
 
         if (!$product) {
@@ -374,26 +338,21 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => $this->resolve_empty_rates_message($cep)));
         }
 
-        // Mantém o CEP informado na sessão do cliente, para consistência com o checkout
-        // (mesmo comportamento de calculadoras de frete de página de produto tradicionais).
         if (function_exists('WC') && WC()->customer) {
             WC()->customer->set_shipping_postcode($cep);
             WC()->customer->set_billing_postcode($cep);
         }
 
-        wp_send_json_success(array('rates' => $rates));
+        $subtotal_produto = (float) $product->get_price() * $quantidade;
+
+        $this->record_shipping_stats('product', $cep, $package, $rates);
+
+        wp_send_json_success(array(
+            'rates'                   => $rates,
+            'free_shipping_bar_html'  => $this->render_free_shipping_bar_html($subtotal_produto, $package, true),
+        ));
     }
 
-    /**
-     * Resolve o produto (ou variação) informado na requisição AJAX da
-     * página de produto, validando se a variação de fato pertence ao
-     * produto pai indicado.
-     *
-     * @param int $product_id   ID do produto (pai, no caso de variáveis).
-     * @param int $variation_id ID da variação selecionada (0 se não houver).
-     *
-     * @return WC_Product|false
-     */
     private function resolve_requested_product($product_id, $variation_id)
     {
         if ($variation_id > 0) {
@@ -411,40 +370,16 @@ class AutoCEP_Shipping
         return $product instanceof WC_Product ? $product : false;
     }
 
-    /**
-     * Handler AJAX: calcula o frete a partir do checkout, usando o
-     * conteúdo atual do carrinho do cliente.
-     *
-     * @return void
-     */
     public function ajax_calc_shipping_checkout()
     {
         $this->handle_cart_based_shipping_ajax('checkout_shipping', 'shipping-checkout');
     }
 
-    /**
-     * Handler AJAX: calcula o frete a partir da página do carrinho de
-     * compras, usando os itens já adicionados pelo cliente.
-     *
-     * @return void
-     */
     public function ajax_calc_shipping_cart()
     {
         $this->handle_cart_based_shipping_ajax('cart_shipping', 'shipping-cart');
     }
 
-    /**
-     * Lógica compartilhada de cálculo de frete baseado no carrinho atual
-     * do cliente — usada tanto pela caixa da página do carrinho quanto
-     * pela caixa do checkout, já que ambas calculam a partir dos mesmos
-     * itens já adicionados, diferindo apenas na opção que as habilita e
-     * no rótulo usado nos logs de diagnóstico.
-     *
-     * @param string $chave_opcao Chave em $options que controla se esta caixa está habilitada ("cart_shipping" ou "checkout_shipping").
-     * @param string $rotulo_log  Identificador usado ao registrar falhas no log de diagnóstico.
-     *
-     * @return void
-     */
     private function handle_cart_based_shipping_ajax($chave_opcao, $rotulo_log)
     {
         check_ajax_referer(AUTOCEP_NONCE_ACTION, 'nonce');
@@ -479,22 +414,52 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => $this->resolve_empty_rates_message($cep)));
         }
 
-        wp_send_json_success(array('rates' => $rates));
+        $subtotal_carrinho = (function_exists('WC') && WC()->cart) ? (float) WC()->cart->get_subtotal() : 0.0;
+
+        $contexto_stats = 'checkout_shipping' === $chave_opcao ? 'checkout' : 'cart';
+        $this->record_shipping_stats($contexto_stats, $cep, $package, $rates);
+
+        wp_send_json_success(array(
+            'rates'                  => $rates,
+            'free_shipping_bar_html' => $this->render_free_shipping_bar_html($subtotal_carrinho, $package, true),
+        ));
     }
 
-    /**
-     * Handler AJAX: aplica de fato uma taxa de frete simulada como o
-     * método escolhido para o carrinho/checkout, usando o mesmo
-     * mecanismo nativo do WooCommerce (sessão "chosen_shipping_methods")
-     * que os botões de rádio de frete usam — ou seja, a partir daqui a
-     * escolha vale de verdade para o pedido, não é apenas visual.
-     *
-     * O CEP e a taxa recebidos são sempre revalidados no servidor antes
-     * de serem aplicados (recalculando as taxas disponíveis no momento
-     * da seleção), em vez de confiar apenas no que o cliente enviou.
-     *
-     * @return void
-     */
+    public function ajax_clear_selected_rate()
+    {
+        check_ajax_referer(AUTOCEP_NONCE_ACTION, 'nonce');
+
+        $this->ensure_wc_cart_session();
+
+        if (function_exists('WC') && WC()->session) {
+            WC()->session->set('chosen_shipping_methods', array());
+
+            if (WC()->cart) {
+                WC()->cart->calculate_shipping();
+                WC()->cart->calculate_totals();
+            }
+        }
+
+        wp_send_json_success();
+    }
+
+    public function ajax_update_shipping_cep()
+    {
+        check_ajax_referer(AUTOCEP_NONCE_ACTION, 'nonce');
+
+        $this->ensure_wc_cart_session();
+
+        $cep = $this->sanitize_cep($_POST['cep'] ?? '');
+
+        if ($cep && function_exists('WC') && WC()->customer) {
+            WC()->customer->set_shipping_postcode($cep);
+            WC()->customer->set_billing_postcode($cep);
+            WC()->customer->save();
+        }
+
+        wp_send_json_success();
+    }
+
     public function ajax_select_shipping_rate()
     {
         check_ajax_referer(AUTOCEP_NONCE_ACTION, 'nonce');
@@ -521,10 +486,6 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('Seu carrinho está vazio.', 'autocep')));
         }
 
-        // Revalida as taxas disponíveis para este CEP no exato momento da
-        // seleção — evita aplicar um método que não existe mais (ex.:
-        // zona de entrega alterada nesse meio tempo, ou requisição
-        // manipulada com um ID inexistente).
         $package = $this->build_package_for_cart($cep);
         $rates   = $this->calculate_rates($package);
 
@@ -545,18 +506,12 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('Este frete não está mais disponível para o CEP informado.', 'autocep')));
         }
 
-        // Atualiza o CEP do cliente na sessão, para consistência com o
-        // restante do carrinho/checkout.
         if (WC()->customer) {
             WC()->customer->set_shipping_postcode($cep);
             WC()->customer->set_billing_postcode($cep);
             WC()->customer->save();
         }
 
-        // Define este método como o frete escolhido para o pacote
-        // principal do carrinho — o mesmo mecanismo nativo usado pelos
-        // botões de rádio de frete do próprio WooCommerce, então a
-        // escolha é respeitada normalmente no restante do fluxo de compra.
         $escolhidos    = WC()->session->get('chosen_shipping_methods', array());
         $escolhidos    = is_array($escolhidos) ? $escolhidos : array();
         $escolhidos[0] = $rate_id;
@@ -571,22 +526,6 @@ class AutoCEP_Shipping
         ));
     }
 
-    /**
-     * Resolve o destino (país, estado e cidade) a partir do CEP digitado
-     * pelo cliente, usando a própria busca de endereço do AutoCEP
-     * (ViaCEP/BrasilAPI/ApiCEP, já com cache).
-     *
-     * Isto é essencial para o casamento correto das Zonas de Entrega do
-     * WooCommerce: uma zona restrita a um estado específico (ex.: "PB")
-     * só é encontrada se o pacote informar a UF correspondente — apenas
-     * o CEP não é suficiente. Sem isso, a simulação pode retornar
-     * "nenhuma opção de frete" mesmo quando o checkout real, com o
-     * endereço completo já preenchido, encontra métodos disponíveis.
-     *
-     * @param string $cep CEP com 8 dígitos.
-     *
-     * @return array Array no formato esperado pela chave "destination" do pacote.
-     */
     private function resolve_destination_from_cep($cep)
     {
         $endereco = AutoCEP_Api::find_address($cep, $this->logger);
@@ -602,9 +541,6 @@ class AutoCEP_Shipping
             );
         }
 
-        // Fallback: se a busca de endereço falhar, tenta aproveitar o
-        // estado/cidade já conhecidos na sessão do cliente (ex.: quando
-        // o CEP simulado é o mesmo do endereço já preenchido no checkout).
         $estado_sessao = (function_exists('WC') && WC()->customer) ? WC()->customer->get_shipping_state() : '';
         $cidade_sessao = (function_exists('WC') && WC()->customer) ? WC()->customer->get_shipping_city() : '';
 
@@ -622,22 +558,8 @@ class AutoCEP_Shipping
         );
     }
 
-    /**
-     * Monta o "pacote" de envio (formato esperado pelo WooCommerce) a
-     * partir de um único produto, usado na simulação da página de produto.
-     *
-     * @param WC_Product $product    Produto sendo simulado.
-     * @param int        $quantidade Quantidade considerada no cálculo.
-     * @param string     $cep        CEP de destino.
-     *
-     * @return array
-     */
     private function build_package_for_product(WC_Product $product, $quantidade, $cep)
     {
-        // Calcula o preço com e sem imposto (necessário para métodos de
-        // frete que consideram o valor declarado do item, como os
-        // Correios), da mesma forma que o WooCommerce faz ao montar o
-        // carrinho real.
         $preco_sem_imposto = (float) $product->get_price_excluding_tax($quantidade);
         $preco_com_imposto = (float) $product->get_price_including_tax($quantidade);
         $imposto           = $preco_com_imposto - $preco_sem_imposto;
@@ -646,9 +568,6 @@ class AutoCEP_Shipping
             ? WC()->cart->generate_cart_id($product->get_id(), $product->is_type('variation') ? $product->get_id() : 0)
             : 'autocep_item';
 
-        // Reaproveita os cupons já aplicados no carrinho real do cliente
-        // (se houver), para que regras de frete grátis por cupom sejam
-        // respeitadas também na simulação da página de produto.
         $cupons_aplicados = (function_exists('WC') && WC()->cart) ? WC()->cart->get_applied_coupons() : array();
 
         $item_pacote = array(
@@ -661,17 +580,6 @@ class AutoCEP_Shipping
             'line_subtotal_tax' => $imposto,
         );
 
-        // Compatibilidade com o plugin oficial do Melhor Envio: como o
-        // item ainda não está no carrinho real nesta simulação, o método
-        // de cálculo deles (CalculateShippingMethodService) espera duas
-        // coisas para não tentar ler do carrinho real (que aqui estaria
-        // vazio para um visitante que ainda não comprou nada): a flag
-        // "product_page_calculation" no pacote, e uma chave
-        // "formatted_data" em cada item com os dados do produto no
-        // formato interno deles. Sem isso, o cálculo funcionava por
-        // acidente apenas quando havia algo no carrinho real da sessão
-        // (ex.: durante testes logado), e falhava para qualquer
-        // visitante com o carrinho vazio.
         $item_pacote['formatted_data'] = $this->get_melhor_envio_formatted_product_data($product, $quantidade);
 
         return array(
@@ -682,25 +590,11 @@ class AutoCEP_Shipping
             'applied_coupons'  => $cupons_aplicados,
             'user'             => array('ID' => get_current_user_id()),
             'destination'      => $this->resolve_destination_from_cep($cep),
-
-            // Também usado pelo Melhor Envio para saber que este pacote
-            // não veio do carrinho real do cliente.
+            'package_id'       => 0,
             'product_page_calculation' => true,
         );
     }
 
-    /**
-     * Monta os dados do produto no formato interno esperado pelo plugin
-     * oficial do Melhor Envio, para simulações fora do carrinho real
-     * (ex.: página de produto). Retorna null se o plugin não estiver
-     * instalado ou se algo der errado — nesse caso o item simplesmente
-     * não terá essa chave extra, sem afetar o restante do cálculo.
-     *
-     * @param WC_Product $product    Produto sendo simulado.
-     * @param int        $quantidade Quantidade considerada.
-     *
-     * @return mixed|null
-     */
     private function get_melhor_envio_formatted_product_data(WC_Product $product, $quantidade)
     {
         if (!class_exists('\MelhorEnvio\Factory\ProductServiceFactory')) {
@@ -722,14 +616,6 @@ class AutoCEP_Shipping
         }
     }
 
-    /**
-     * Monta o "pacote" de envio a partir do carrinho atual do cliente,
-     * usado na simulação do checkout.
-     *
-     * @param string $cep CEP de destino.
-     *
-     * @return array
-     */
     private function build_package_for_cart($cep)
     {
         $cart_package = WC()->cart->get_shipping_packages();
@@ -737,15 +623,10 @@ class AutoCEP_Shipping
 
         $package['destination'] = $this->resolve_destination_from_cep($cep);
 
-        // Mesma compatibilidade aplicada à página de produto: injeta
-        // "formatted_data" em cada item como rede de segurança para o
-        // plugin do Melhor Envio. Diferente da página de produto, aqui
-        // NÃO marcamos "product_page_calculation", pois o carrinho é
-        // real — o caminho normal deles (ler direto do carrinho) deve
-        // continuar sendo tentado primeiro; isto só socorre o cálculo
-        // caso esse caminho normal não retorne nada (o que estava
-        // acontecendo silenciosamente para alguns visitantes, resultando
-        // em "nenhuma opção de frete disponível" em vez de um erro).
+        if (!isset($package['package_id'])) {
+            $package['package_id'] = 0;
+        }
+
         if (!empty($package['contents']) && class_exists('\MelhorEnvio\Factory\ProductServiceFactory')) {
             foreach ($package['contents'] as $chave => $item) {
                 if (empty($item['data']) || !($item['data'] instanceof WC_Product)) {
@@ -761,70 +642,81 @@ class AutoCEP_Shipping
         return $package;
     }
 
-    /**
-     * Calcula as taxas de frete disponíveis para um pacote, consultando
-     * a Zona de Entrega correspondente e executando cada método de envio
-     * habilitado nela.
-     *
-     * @param array $package Pacote no formato do WooCommerce.
-     *
-     * @return array|WP_Error Lista de taxas normalizadas ou erro.
-     */
     private function calculate_rates($package)
+    {
+        $options    = AutoCEP_Admin::get_options();
+        $horas_cache = isset($options['general']['shipping_cache_hours']) ? (int) $options['general']['shipping_cache_hours'] : 24;
+
+        if ($horas_cache <= 0) {
+            return $this->calculate_rates_uncached($package);
+        }
+
+        $cache_key = $this->build_shipping_cache_key($package);
+        $em_cache  = get_transient($cache_key);
+
+        if (false !== $em_cache) {
+            return $em_cache;
+        }
+
+        $resultado = $this->calculate_rates_uncached($package);
+
+        if (!is_wp_error($resultado) && !empty($resultado)) {
+            set_transient($cache_key, $resultado, HOUR_IN_SECONDS * $horas_cache);
+        }
+
+        return $resultado;
+    }
+
+    private function build_shipping_cache_key($package)
+    {
+        $itens = array();
+
+        if (!empty($package['contents'])) {
+            foreach ($package['contents'] as $item) {
+                $produto_id = (!empty($item['data']) && $item['data'] instanceof WC_Product)
+                    ? $item['data']->get_id()
+                    : 0;
+
+                $itens[] = $produto_id . ':' . (isset($item['quantity']) ? (int) $item['quantity'] : 1);
+            }
+        }
+
+        sort($itens);
+
+        $assinatura = array(
+            'postcode' => isset($package['destination']['postcode']) ? $package['destination']['postcode'] : '',
+            'state'    => isset($package['destination']['state']) ? $package['destination']['state'] : '',
+            'items'    => $itens,
+            'coupons'  => !empty($package['applied_coupons']) ? $package['applied_coupons'] : array(),
+        );
+
+        return self::CACHE_PREFIX . md5(wp_json_encode($assinatura));
+    }
+
+    private function calculate_rates_uncached($package)
     {
         if (!class_exists('WC_Shipping')) {
             return new WP_Error('autocep_no_wc', __('WooCommerce não está disponível.', 'autocep'));
         }
 
-        // Alguns métodos de frete de terceiros (ex.: Melhor Envio, Frenet)
-        // consultam uma API externa em tempo real para cotar o frete, o
-        // que pode levar alguns segundos a mais que um Flat Rate comum.
-        // Estendemos o tempo de execução do PHP nesta requisição AJAX
-        // pontualmente, quando o servidor permitir, para evitar que a
-        // simulação seja interrompida antes da resposta da transportadora.
         if (function_exists('set_time_limit') && !ini_get('safe_mode')) {
             @set_time_limit(45);
         }
 
         try {
-            // Usa o pipeline oficial do WooCommerce (o mesmo utilizado pelo
-            // carrinho/checkout reais): resolve a Zona de Entrega
-            // correspondente ao destino e calcula as taxas de todos os
-            // métodos habilitados nela — incluindo integrações de
-            // terceiros como Melhor Envio e Frenet, já que elas também se
-            // registram como métodos de frete padrão do WooCommerce e
-            // respondem à mesma chamada `calculate_shipping()`. Também
-            // respeita regras nativas de disponibilidade (ex.: frete
-            // grátis por cupom ou valor mínimo).
             $resultado = WC_Shipping::instance()->calculate_shipping_for_package($package);
         } catch (\Throwable $erro) {
-            // Protege a simulação contra falhas de plugins de frete de
-            // terceiros (ex.: exceção não tratada, API fora do ar) para
-            // que o restante do checkout/produto continue funcionando
-            // normalmente em vez de retornar um erro fatal no AJAX.
             $this->logger->log('shipping-methods', $package['destination']['postcode'] ?? '', $erro->getMessage(), 'error');
 
             return new WP_Error('autocep_shipping_exception', __('Uma das transportadoras configuradas não respondeu corretamente. Tente novamente em instantes.', 'autocep'));
         }
 
         if (empty($resultado['rates'])) {
-            // Registra no diagnóstico quando a zona foi encontrada mas
-            // nenhum método retornou taxa — útil para identificar, por
-            // exemplo, quando o Melhor Envio/Frenet não está configurado
-            // corretamente (token inválido, CEP de origem ausente etc.).
             $this->logger->log('shipping-methods', $package['destination']['postcode'] ?? '', __('Nenhum método de frete retornou taxa para este destino.', 'autocep'), 'warning');
 
             return array();
         }
 
-        // Diagnóstico extra: se a zona de entrega tem mais métodos
-        // habilitados do que taxas retornadas, alguns métodos ficaram
-        // "silenciosos" (não lançaram erro, mas também não retornaram
-        // preço). É um comportamento comum de transportadoras via
-        // Melhor Envio/Frenet quando o produto não tem peso/dimensões
-        // cadastrados, ou quando aquela transportadora específica não
-        // atende ao destino — registramos os nomes para facilitar o
-        // diagnóstico, sem impactar o resultado exibido ao cliente.
         $this->log_missing_rate_methods($package, $resultado['rates']);
 
         $taxas = array();
@@ -833,38 +725,342 @@ class AutoCEP_Shipping
             $label = $rate->get_label();
             $meta  = $rate->get_meta_data();
 
-            // Compatibilidade com plugins de frete (ex.: Correios) que
-            // armazenam o prazo estimado de entrega como meta da taxa.
-            if (!empty($meta['_delivery_forecast'])) {
-                /* translators: %s: prazo estimado em dias úteis. */
-                $label .= ' ' . sprintf(__('(Entrega em %s dias úteis)', 'autocep'), $meta['_delivery_forecast']);
+            $estimativa = $this->resolve_rate_delivery_estimate($meta, $label);
+
+            if (!empty($estimativa['legacy_days_suffix'])) {
+                $label .= ' ' . $estimativa['legacy_days_suffix'];
             }
 
             $taxas[] = array(
-                'id'             => $rate->get_id(),
-                'label'          => $label,
-                'cost'           => (float) $rate->get_cost(),
-                'cost_formatted' => wc_price($rate->get_cost()),
+                'id'                  => $rate->get_id(),
+                'label'               => $label,
+                'cost'                => (float) $rate->get_cost(),
+                'cost_formatted'      => wc_price($rate->get_cost()),
+                'delivery_estimate'   => $estimativa['label'],
+                'pickup_instructions' => isset($meta['_autocep_pickup_instructions']) ? (string) $meta['_autocep_pickup_instructions'] : '',
             );
+        }
+
+        if (class_exists('AutoCEP_Store_Pickup') && !empty($package['destination']['postcode'])) {
+            $cep_destino = preg_replace('/\D/', '', $package['destination']['postcode']);
+            $tem_retirada_nas_taxas = false;
+
+            foreach ($resultado['rates'] as $rate) {
+                if (strpos($rate->get_id(), 'autocep_store_pickup') !== false) {
+                    $tem_retirada_nas_taxas = true;
+                    break;
+                }
+            }
+
+            if (!$tem_retirada_nas_taxas) {
+                $lojas_proximas = AutoCEP_Store_Pickup::get_nearby_stores($cep_destino);
+
+                foreach ($lojas_proximas as $loja) {
+                    $gratis = empty($loja['pickup_fee']) || (float) $loja['pickup_fee'] <= 0;
+
+                    if (null === $loja['distance_km']) {
+                        $label = $gratis
+                            ? sprintf(__('Retire Grátis na %s', 'autocep'), $loja['name'])
+                            : sprintf(__('Retire na %s', 'autocep'), $loja['name']);
+                    } else {
+                        $dist_fmt = number_format((float) $loja['distance_km'], 1, ',', '.');
+                        $label = $gratis
+                            ? sprintf(__('Retire Grátis na %1$s (a %2$s km de você)', 'autocep'), $loja['name'], $dist_fmt)
+                            : sprintf(__('Retire na %1$s (a %2$s km de você)', 'autocep'), $loja['name'], $dist_fmt);
+                    }
+
+                    $custo = (float) $loja['pickup_fee'];
+
+                    $taxas[] = array(
+                        'id'                  => 'autocep_store_pickup_fallback_' . $loja['id'],
+                        'label'               => $label,
+                        'cost'                => $custo,
+                        'cost_formatted'      => wc_price($custo),
+                        'delivery_estimate'   => '',
+                        'pickup_instructions' => !empty($loja['instructions']) ? $loja['instructions'] : '',
+                    );
+                }
+            }
+        }
+
+        if (class_exists('AutoCEP_Km_Delivery') && !empty($package['destination']['postcode'])) {
+            $cep_km   = preg_replace('/\D/', '', $package['destination']['postcode']);
+            $taxa_km  = AutoCEP_Km_Delivery::calculate($cep_km);
+
+            if ($taxa_km !== null) {
+                $ja_tem_km = false;
+                foreach ($taxas as $t) {
+                    if ($t['id'] === 'autocep_km_delivery') {
+                        $ja_tem_km = true;
+                        break;
+                    }
+                }
+                if (!$ja_tem_km) {
+                    $taxas[] = $taxa_km;
+                }
+            }
         }
 
         return $taxas;
     }
 
-    /**
-     * Compara os métodos de frete habilitados na Zona de Entrega
-     * correspondente ao pacote com as taxas efetivamente retornadas, e
-     * registra no log de diagnóstico o nome de qualquer método que não
-     * tenha retornado nenhuma taxa — sem lançar erro, mas também sem dar
-     * preço (comportamento comum quando o produto não tem peso/dimensões
-     * cadastrados, ou quando a transportadora específica não atende ao
-     * destino consultado).
-     *
-     * @param array $package Pacote usado no cálculo.
-     * @param array $rates   Taxas (`WC_Shipping_Rate`) retornadas pelo WooCommerce.
-     *
-     * @return void
-     */
+    private function resolve_rate_delivery_estimate($meta, $label = '')
+    {
+        $options = AutoCEP_Admin::get_options();
+        $config  = isset($options['delivery_estimate']) ? $options['delivery_estimate'] : array();
+
+        $legacy_suffix = !empty($meta['_delivery_forecast'])
+            ? sprintf(__('(Entrega em %s dias úteis)', 'autocep'), $meta['_delivery_forecast'])
+            : '';
+
+        if (empty($config['enabled'])) {
+            return array('label' => '', 'legacy_days_suffix' => $legacy_suffix);
+        }
+
+        $chaves_meta_dias = array('_delivery_forecast', 'delivery_time', '_melhorenvio_delivery_time', 'delivery-time', 'prazo_entrega');
+
+        $dias_min = null;
+
+        foreach ($chaves_meta_dias as $chave) {
+            if (isset($meta[$chave]) && is_numeric($meta[$chave]) && (int) $meta[$chave] > 0) {
+                $dias_min = (int) $meta[$chave];
+                break;
+            }
+        }
+
+        if (null === $dias_min && !empty($label) && preg_match('/(\d+)\s*dia/ui', $label, $matches_dias)) {
+            $dias_extraidos = (int) $matches_dias[1];
+
+            if ($dias_extraidos > 0) {
+                $dias_min = $dias_extraidos;
+            }
+        }
+
+        $dias_max = null;
+
+        if (null === $dias_min && !empty($config['fallback_enabled'])) {
+            $dias_min = isset($config['fallback_min_days']) ? (int) $config['fallback_min_days'] : 0;
+            $dias_max = isset($config['fallback_max_days']) ? (int) $config['fallback_max_days'] : $dias_min;
+        }
+
+        if (null === $dias_min || $dias_min <= 0) {
+            return array('label' => '', 'legacy_days_suffix' => $legacy_suffix);
+        }
+
+        if (null === $dias_max) {
+            $margem   = isset($config['range_margin_days']) ? max(0, (int) $config['range_margin_days']) : 2;
+            $dias_max = $dias_min + $margem;
+        }
+
+        $apenas_uteis = !empty($config['business_days_only']);
+        $fuso         = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('America/Sao_Paulo');
+
+        $data_min = $this->add_business_days(new \DateTime('now', $fuso), $dias_min, $apenas_uteis);
+        $data_max = $dias_max > $dias_min
+            ? $this->add_business_days(new \DateTime('now', $fuso), $dias_max, $apenas_uteis)
+            : clone $data_min;
+
+        return array(
+            'label'               => $this->format_delivery_range($data_min, $data_max),
+            'legacy_days_suffix'  => '',
+        );
+    }
+
+    private function add_business_days(\DateTime $data, $dias, $apenas_uteis)
+    {
+        $data       = clone $data;
+        $adicionados = 0;
+
+        while ($adicionados < $dias) {
+            $data->modify('+1 day');
+
+            if ($apenas_uteis) {
+                $dia_semana = (int) $data->format('N'); 
+
+                if ($dia_semana >= 6) {
+                    continue; 
+                }
+            }
+
+            $adicionados++;
+        }
+
+        return $data;
+    }
+
+    private function format_delivery_range(\DateTime $data_min, \DateTime $data_max)
+    {
+        $formatar = function (\DateTime $data) {
+            return date_i18n('l (d/m)', $data->getTimestamp());
+        };
+
+        if ($data_min->format('Y-m-d') === $data_max->format('Y-m-d')) {
+            return sprintf(__('Chega em %s', 'autocep'), $formatar($data_min));
+        }
+
+        return sprintf(__('Chega entre %1$s e %2$s', 'autocep'), $formatar($data_min), $formatar($data_max));
+    }
+
+    private function get_free_shipping_threshold($package = null)
+    {
+        $options = AutoCEP_Admin::get_options();
+        $config  = isset($options['free_shipping_bar']) ? $options['free_shipping_bar'] : array();
+
+        if (!empty($config['threshold']) && (float) $config['threshold'] > 0) {
+            return (float) $config['threshold'];
+        }
+
+        if (empty($config['auto_detect']) || !class_exists('WC_Shipping_Zones')) {
+            return 0.0;
+        }
+
+        $zona_destino = null;
+
+        if (!empty($package)) {
+            $zona_destino = WC_Shipping_Zones::get_zone_matching_package($package);
+        }
+
+        $minimos = $this->collect_free_shipping_minimums($zona_destino);
+
+        if (empty($minimos)) {
+            return 0.0;
+        }
+
+        return min($minimos);
+    }
+
+    private function collect_free_shipping_minimums($zona_unica = null)
+    {
+        if (!class_exists('WC_Shipping_Zones')) {
+            return array();
+        }
+
+        $zonas = array();
+
+        if ($zona_unica instanceof WC_Shipping_Zone) {
+            $zonas[] = $zona_unica;
+        } else {
+            foreach (WC_Shipping_Zones::get_zones() as $zona_dados) {
+                $zona = WC_Shipping_Zones::get_zone($zona_dados['zone_id']);
+
+                if ($zona) {
+                    $zonas[] = $zona;
+                }
+            }
+
+            $zonas[] = new WC_Shipping_Zone(0);
+        }
+
+        $minimos = array();
+
+        foreach ($zonas as $zona) {
+            if (!method_exists($zona, 'get_shipping_methods')) {
+                continue;
+            }
+
+            foreach ($zona->get_shipping_methods(true) as $metodo) {
+                if ('free_shipping' !== $metodo->id || !method_exists($metodo, 'get_option')) {
+                    continue;
+                }
+
+                $valor_minimo = $metodo->get_option('min_amount');
+
+                if ('' !== $valor_minimo && is_numeric($valor_minimo) && (float) $valor_minimo > 0) {
+                    $minimos[] = (float) $valor_minimo;
+                }
+            }
+        }
+
+        return $minimos;
+    }
+
+    private function build_free_shipping_bar_data($subtotal, $package = null, $zona_confirmada = false)
+    {
+        $options = AutoCEP_Admin::get_options();
+        $config  = isset($options['free_shipping_bar']) ? $options['free_shipping_bar'] : array();
+
+        if (empty($config['enabled'])) {
+            return null;
+        }
+
+        $limite = $this->get_free_shipping_threshold($package);
+
+        if ($limite <= 0) {
+            return null;
+        }
+
+        $subtotal   = max(0, (float) $subtotal);
+        $faltante   = max(0, $limite - $subtotal);
+        $percentual = $limite > 0 ? (int) min(100, round(($subtotal / $limite) * 100)) : 0;
+
+        if ($faltante <= 0 && !$zona_confirmada) {
+            return array(
+                'achieved'   => false,
+                'percentage' => min(99, $percentual),
+                'message'    => __('Simule o frete abaixo e veja se você já ganhou Frete Grátis!', 'autocep'),
+            );
+        }
+
+        if ($faltante <= 0) {
+            $mensagem = !empty($config['message_achieved'])
+                ? $config['message_achieved']
+                : __('Você ganhou Frete Grátis!', 'autocep');
+        } else {
+            $modelo   = !empty($config['message_progress'])
+                ? $config['message_progress']
+                : __('Faltam {missing} para você ganhar Frete Grátis!', 'autocep');
+            $mensagem = str_replace('{missing}', wp_strip_all_tags(wc_price($faltante)), $modelo);
+        }
+
+        return array(
+            'achieved'   => $faltante <= 0,
+            'percentage' => $percentual,
+            'message'    => $mensagem,
+        );
+    }
+
+    private function render_free_shipping_bar_html($subtotal, $package = null, $zona_confirmada = false)
+    {
+        $dados = $this->build_free_shipping_bar_data($subtotal, $package, $zona_confirmada);
+
+        if (null === $dados) {
+            return '';
+        }
+
+        ob_start();
+        ?>
+        <div class="autocep-free-shipping-bar<?php echo $dados['achieved'] ? ' autocep-free-shipping-bar--achieved' : ''; ?>">
+            <div class="autocep-free-shipping-bar-track">
+                <div class="autocep-free-shipping-bar-fill" style="width: <?php echo esc_attr($dados['percentage']); ?>%;"></div>
+            </div>
+            <p class="autocep-free-shipping-bar-message"><?php echo esc_html($dados['message']); ?></p>
+        </div>
+        <?php
+
+        return trim((string) ob_get_clean());
+    }
+
+    private function record_shipping_stats($contexto, $cep, $package, $rates)
+    {
+        if (empty($rates) || !class_exists('AutoCEP_Stats')) {
+            return;
+        }
+
+        $custos = wp_list_pluck($rates, 'cost');
+
+        if (empty($custos)) {
+            return;
+        }
+
+        AutoCEP_Stats::record_simulation(
+            $contexto,
+            $cep,
+            isset($package['destination']['state']) ? $package['destination']['state'] : '',
+            isset($package['destination']['city']) ? $package['destination']['city'] : '',
+            min($custos)
+        );
+    }
+
     private function log_missing_rate_methods($package, $rates)
     {
         if (!class_exists('WC_Shipping_Zones')) {
@@ -880,9 +1076,6 @@ class AutoCEP_Shipping
         $ids_com_taxa = array();
 
         foreach ($rates as $rate) {
-            // O ID da taxa vem no formato "método:id_da_instância" (ex.:
-            // "flat_rate:2"); o ID da instância é o que identifica o
-            // método configurado na zona.
             $partes = explode(':', $rate->get_id());
             $ids_com_taxa[] = end($partes);
         }
@@ -906,7 +1099,6 @@ class AutoCEP_Shipping
                 'shipping-methods',
                 $package['destination']['postcode'] ?? '',
                 sprintf(
-                    /* translators: 1: lista de nomes dos métodos de frete que não retornaram taxa. 2: aviso extra sobre peso, se aplicável. */
                     __('Os seguintes métodos de frete habilitados na zona não retornaram taxa para este destino (sem erro, apenas sem preço): %1$s. Verifique se a transportadora atende a esse CEP.%2$s', 'autocep'),
                     implode(', ', $sem_taxa),
                     $aviso_peso
@@ -916,16 +1108,6 @@ class AutoCEP_Shipping
         }
     }
 
-    /**
-     * Verifica se algum produto do pacote está sem peso cadastrado (0 ou
-     * vazio) — causa muito comum de transportadoras específicas (ex.:
-     * Jadlog, Azul) rejeitarem a cotação silenciosamente, enquanto
-     * outras (ex.: Correios) toleram e retornam preço mesmo assim.
-     *
-     * @param array $package Pacote usado no cálculo.
-     *
-     * @return string Texto complementar para o log, ou string vazia.
-     */
     private function build_missing_weight_hint($package)
     {
         if (empty($package['contents'])) {
@@ -951,24 +1133,11 @@ class AutoCEP_Shipping
         }
 
         return ' ' . sprintf(
-            /* translators: %s: lista de nomes dos produtos sem peso cadastrado. */
             __('Possível causa: produto(s) sem peso cadastrado — %s. Algumas transportadoras exigem peso mínimo para cotar.', 'autocep'),
             implode(', ', $produtos_sem_peso)
         );
     }
 
-    /**
-     * Escolhe a mensagem mais precisa para exibir quando nenhuma taxa
-     * de frete foi retornada: se o próprio CEP não foi encontrado em
-     * nenhuma das APIs de busca de endereço (situação já registrada no
-     * log de diagnóstico em resolve_destination_from_cep()), diz isso
-     * diretamente — em vez da mensagem genérica "nenhuma opção de
-     * frete disponível", que nesse caso escondia a causa real.
-     *
-     * @param string $cep CEP consultado.
-     *
-     * @return string
-     */
     private function resolve_empty_rates_message($cep)
     {
         $options = AutoCEP_Admin::get_options();
@@ -982,13 +1151,6 @@ class AutoCEP_Shipping
         return __('Nenhuma opção de frete disponível para este CEP.', 'autocep');
     }
 
-    /**
-     * Sanitiza e valida um CEP recebido via requisição AJAX.
-     *
-     * @param string $cep CEP bruto.
-     *
-     * @return string|false CEP com 8 dígitos ou false se inválido.
-     */
     private function sanitize_cep($cep)
     {
         $cep = preg_replace('/\D/', '', sanitize_text_field(wp_unslash($cep)));

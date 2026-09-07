@@ -1,66 +1,27 @@
 <?php
-/**
- * Classe responsável pela consulta de CEP com fallback e cache.
- *
- * @package AutoCEP
- */
 
 if (!defined('ABSPATH')) {
     exit;
 }
 
-/**
- * Gerencia as requisições às APIs externas de CEP (ViaCEP, BrasilAPI e
- * ApiCEP), executando-as em cascata conforme a prioridade configurada
- * no painel administrativo, com cache via Transients API.
- */
 class AutoCEP_Api
 {
-    /**
-     * Prefixo utilizado nas chaves de transient de cache de CEP.
-     *
-     * @var string
-     */
     const CACHE_PREFIX = 'autocep_cep_';
 
-    /**
-     * Timeout (em segundos) aplicado às requisições HTTP externas.
-     *
-     * @var int
-     */
     const REQUEST_TIMEOUT = 8;
 
-    /**
-     * Instância do logger, usada para registrar falhas de API.
-     *
-     * @var AutoCEP_Logger
-     */
     private $logger;
 
-    /**
-     * Construtor.
-     *
-     * @param AutoCEP_Logger $logger Instância do logger do plugin.
-     */
     public function __construct(AutoCEP_Logger $logger)
     {
         $this->logger = $logger;
 
-        // Ações AJAX de front-end (mantém a ação legada "autocep_get_address"
-        // para preservar total compatibilidade com integrações existentes).
         add_action('wp_ajax_autocep_get_address', array($this, 'ajax_get_address'));
         add_action('wp_ajax_nopriv_autocep_get_address', array($this, 'ajax_get_address'));
 
-        // Ação administrativa para limpar o cache de CEPs.
         add_action('wp_ajax_autocep_clear_cache', array($this, 'ajax_clear_cache'));
     }
 
-    /**
-     * Retorna a lista de APIs suportadas pelo plugin, com metadados
-     * usados tanto no painel administrativo quanto no motor de consulta.
-     *
-     * @return array
-     */
     public static function get_supported_apis()
     {
         return array(
@@ -79,13 +40,6 @@ class AutoCEP_Api
         );
     }
 
-    /**
-     * Handler AJAX para busca de endereço por CEP. Mantido com a mesma
-     * assinatura da versão legada (ação "autocep_get_address") para não
-     * quebrar nenhuma integração já existente.
-     *
-     * @return void
-     */
     public function ajax_get_address()
     {
         if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), AUTOCEP_NONCE_ACTION)) {
@@ -111,16 +65,6 @@ class AutoCEP_Api
         wp_send_json_success($endereco);
     }
 
-    /**
-     * Busca o endereço de um CEP, primeiro no cache (Transients) e,
-     * caso não exista, executa a cascata de APIs habilitadas conforme
-     * a prioridade configurada.
-     *
-     * @param string              $cep    CEP com 8 dígitos, apenas números.
-     * @param AutoCEP_Logger|null $logger Instância do logger (opcional).
-     *
-     * @return array|WP_Error Dados normalizados do endereço ou erro.
-     */
     public static function find_address($cep, $logger = null)
     {
         $cache_key = self::CACHE_PREFIX . $cep;
@@ -149,7 +93,7 @@ class AutoCEP_Api
                     $logger->log($slug, $cep, $resultado->get_error_message(), 'error');
                 }
 
-                continue; // Tenta a próxima API da cascata.
+                continue; 
             }
 
             if (empty($resultado)) {
@@ -162,7 +106,6 @@ class AutoCEP_Api
                 continue;
             }
 
-            // Sucesso: grava em cache e retorna.
             $dias_cache = isset($options['general']['cache_days']) ? (int) $options['general']['cache_days'] : 30;
             set_transient($cache_key, $resultado, DAY_IN_SECONDS * max(0, $dias_cache));
 
@@ -172,14 +115,6 @@ class AutoCEP_Api
         return $ultimo_erro ? $ultimo_erro : new WP_Error('autocep_not_found', __('CEP não encontrado.', 'autocep'));
     }
 
-    /**
-     * Retorna a lista de slugs de APIs habilitadas, ordenada pela
-     * prioridade configurada (menor número = maior prioridade).
-     *
-     * @param array $options Opções do plugin.
-     *
-     * @return array
-     */
     public static function get_ordered_active_apis($options)
     {
         $apis = isset($options['general']['apis']) ? $options['general']['apis'] : array();
@@ -196,15 +131,6 @@ class AutoCEP_Api
         return array_keys($ativas);
     }
 
-    /**
-     * Executa a requisição a um provedor específico e normaliza a
-     * resposta para o formato padrão do plugin.
-     *
-     * @param string $slug Identificador da API (viacep, brasilapi, apicep).
-     * @param string $cep  CEP com 8 dígitos.
-     *
-     * @return array|WP_Error
-     */
     public static function request_provider($slug, $cep)
     {
         switch ($slug) {
@@ -222,13 +148,6 @@ class AutoCEP_Api
         }
     }
 
-    /**
-     * Consulta a API ViaCEP.
-     *
-     * @param string $cep CEP com 8 dígitos.
-     *
-     * @return array|WP_Error
-     */
     private static function fetch_viacep($cep)
     {
         $response = wp_remote_get("https://viacep.com.br/ws/{$cep}/json/", array(
@@ -253,13 +172,6 @@ class AutoCEP_Api
         ), $cep);
     }
 
-    /**
-     * Consulta a API BrasilAPI (v2).
-     *
-     * @param string $cep CEP com 8 dígitos.
-     *
-     * @return array|WP_Error
-     */
     private static function fetch_brasilapi($cep)
     {
         $response = wp_remote_get("https://brasilapi.com.br/api/cep/v2/{$cep}", array(
@@ -290,13 +202,6 @@ class AutoCEP_Api
         ), $cep);
     }
 
-    /**
-     * Consulta a API ApiCEP.
-     *
-     * @param string $cep CEP com 8 dígitos.
-     *
-     * @return array|WP_Error
-     */
     private static function fetch_apicep($cep)
     {
         $response = wp_remote_get("https://cdn.apicep.com/file/apicep/{$cep}.json", array(
@@ -321,15 +226,6 @@ class AutoCEP_Api
         ), $cep);
     }
 
-    /**
-     * Normaliza os dados de um endereço para o formato padrão usado em
-     * todo o plugin (compatível com o formato da versão legada).
-     *
-     * @param array  $data Dados brutos já mapeados (logradouro, bairro, localidade, uf).
-     * @param string $cep  CEP consultado.
-     *
-     * @return array
-     */
     private static function normalize($data, $cep)
     {
         if (empty($data['logradouro']) && empty($data['localidade'])) {
@@ -345,12 +241,6 @@ class AutoCEP_Api
         );
     }
 
-    /**
-     * Limpa todo o cache de CEPs armazenado via Transients API, a
-     * pedido do administrador (botão "Limpar Cache de CEPs").
-     *
-     * @return void
-     */
     public function ajax_clear_cache()
     {
         check_ajax_referer(AUTOCEP_ADMIN_NONCE_ACTION, 'nonce');
@@ -364,8 +254,7 @@ class AutoCEP_Api
         $prefixo_transient  = '_transient_' . self::CACHE_PREFIX;
         $prefixo_timeout    = '_transient_timeout_' . self::CACHE_PREFIX;
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- consulta com LIKE preparada via wpdb->prepare.
-        $total_removido = $wpdb->query(
+        $total_removido = (int) $wpdb->query(
             $wpdb->prepare(
                 "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",
                 $wpdb->esc_like($prefixo_transient) . '%',
@@ -373,8 +262,18 @@ class AutoCEP_Api
             )
         );
 
+        $prefixo_transient_frete = '_transient_' . AutoCEP_Shipping::CACHE_PREFIX;
+        $prefixo_timeout_frete   = '_transient_timeout_' . AutoCEP_Shipping::CACHE_PREFIX;
+
+        $total_removido += (int) $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",
+                $wpdb->esc_like($prefixo_transient_frete) . '%',
+                $wpdb->esc_like($prefixo_timeout_frete) . '%'
+            )
+        );
+
         wp_send_json_success(array(
-            /* translators: %d: quantidade de registros removidos. */
             'message' => sprintf(__('Cache limpo com sucesso (%d registros removidos).', 'autocep'), (int) $total_removido),
         ));
     }

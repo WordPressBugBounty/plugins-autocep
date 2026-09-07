@@ -2,8 +2,8 @@
 /**
  * Plugin Name: AutoCEP
  * Plugin URI: https://tesw.com.br/plugins/
- * Description: Autocompletar endereço por CEP e simulador de frete completo para WooCommerce — produto, carrinho e checkout — com múltiplas APIs, cache, fallback automático, compatível com Fluid Checkout, CartFlows, Melhor Envio, Frenet e mais.
- * Version: 2.3.6
+ * Description: Autocompletar endereço por CEP e simulador de frete completo para WooCommerce — produto, carrinho e checkout — com múltiplas APIs, cache, fallback automático, previsão de entrega com data estimada, barra de progresso de frete grátis, cache de cotações, retirada em loja física por proximidade via Google Maps e testes de conexão em tempo real com as APIs do Melhor Envio e da Frenet, compatível com Fluid Checkout, CartFlows e mais.
+ * Version: 2.46
  * Author: TESW | Dev Wanderson Cesar
  * Author URI: https://tesw.com.br
  * Text Domain: autocep
@@ -14,31 +14,13 @@
  * WC tested up to: 9.0
  * License: GPL-2.0+
  * License URI: http://www.gnu.org/licenses/gpl-2.0.html
- *
- * Este plugin, todas as bibliotecas incluídas e quaisquer outros ativos incluídos
- * são licenciados como GPL ou estão sob uma licença compatível com GPL.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * Nota interna: os identificadores de código (prefixo de funções/classes
- * "autocep"/"AutoCEP_", constantes AUTOCEP_*, text domain "autocep") foram
- * mantidos intencionalmente ao renomear o nome público do plugin, para não
- * arriscar quebrar hooks, opções salvas ou traduções já existentes.
  */
 
 if (!defined('ABSPATH')) {
-    exit; // Impede acesso direto ao arquivo.
+    exit;
 }
 
-/*
- * -----------------------------------------------------------------------
- * Constantes globais do plugin
- * -----------------------------------------------------------------------
- */
-define('AUTOCEP_VERSION', '2.3.5');
+define('AUTOCEP_VERSION', '2.46');
 define('AUTOCEP_PLUGIN_FILE', __FILE__);
 define('AUTOCEP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTOCEP_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -47,55 +29,22 @@ define('AUTOCEP_OPTION_KEY', 'autocep_options');
 define('AUTOCEP_NONCE_ACTION', 'autocep_nonce');
 define('AUTOCEP_ADMIN_NONCE_ACTION', 'autocep_admin_nonce');
 
-/**
- * Classe principal de inicialização do plugin.
- *
- * Responsável por carregar os módulos, registrar hooks globais e manter
- * total compatibilidade com o comportamento legado (autocompletar o
- * endereço no Checkout do WooCommerce), que permanece ativo por padrão.
- */
 final class AutoCEP_Plugin
 {
-    /**
-     * Instância única (Singleton).
-     *
-     * @var AutoCEP_Plugin|null
-     */
     private static $instance = null;
 
-    /**
-     * Instância do gerenciador de opções/admin.
-     *
-     * @var AutoCEP_Admin
-     */
     public $admin;
 
-    /**
-     * Instância do gerenciador de APIs de CEP.
-     *
-     * @var AutoCEP_Api
-     */
     public $api;
 
-    /**
-     * Instância do motor de cálculo de frete.
-     *
-     * @var AutoCEP_Shipping
-     */
     public $shipping;
 
-    /**
-     * Instância do sistema de logs/diagnóstico.
-     *
-     * @var AutoCEP_Logger
-     */
     public $logger;
 
-    /**
-     * Retorna (ou cria) a instância única do plugin.
-     *
-     * @return AutoCEP_Plugin
-     */
+    public $stats;
+
+    public $store_pickup;
+
     public static function get_instance()
     {
         if (null === self::$instance) {
@@ -105,9 +54,6 @@ final class AutoCEP_Plugin
         return self::$instance;
     }
 
-    /**
-     * Construtor privado (Singleton).
-     */
     private function __construct()
     {
         $this->includes();
@@ -115,61 +61,76 @@ final class AutoCEP_Plugin
         $this->register_hooks();
     }
 
-    /**
-     * Inclui os arquivos das classes do plugin.
-     *
-     * @return void
-     */
     private function includes()
     {
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-logger.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-stats.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-tickets.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-admin.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-api.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-maps-service.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-store-pickup.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-km-delivery.php';
     }
 
-    /**
-     * Instancia os módulos principais do plugin.
-     *
-     * @return void
-     */
     private function init_modules()
     {
-        $this->logger   = new AutoCEP_Logger();
-        $this->admin    = new AutoCEP_Admin();
-        $this->api      = new AutoCEP_Api($this->logger);
-        $this->shipping = new AutoCEP_Shipping($this->logger);
+        $this->logger       = new AutoCEP_Logger();
+        $this->stats        = new AutoCEP_Stats();
+        $this->admin        = new AutoCEP_Admin();
+        $this->api          = new AutoCEP_Api($this->logger);
+        $this->shipping     = new AutoCEP_Shipping($this->logger);
+        $this->store_pickup = new AutoCEP_Store_Pickup($this->logger);
     }
 
-    /**
-     * Registra hooks globais do WordPress.
-     *
-     * @return void
-     */
     private function register_hooks()
     {
         add_action('wp_enqueue_scripts', array($this, 'enqueue_frontend_assets'));
         add_filter('plugin_action_links_' . AUTOCEP_PLUGIN_BASENAME, array($this, 'plugin_action_links'));
+        add_filter('plugin_row_meta', array($this, 'plugin_row_meta'), 10, 2);
         add_action('plugins_loaded', array($this, 'load_textdomain'));
+        add_action('plugins_loaded', array($this, 'maybe_upgrade'));
+        add_filter('woocommerce_shipping_methods', array($this, 'register_shipping_methods'));
     }
 
-    /**
-     * Carrega o textdomain para traduções.
-     *
-     * @return void
-     */
+    public function register_shipping_methods($methods)
+    {
+        $options = AutoCEP_Admin::get_options();
+        $config  = isset($options['distance_shipping']) ? $options['distance_shipping'] : array();
+
+        if (!empty($config['pickup_enabled'])) {
+            require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping-pickup.php';
+            $methods['autocep_store_pickup'] = 'AutoCEP_Shipping_Store_Pickup';
+        }
+
+        return $methods;
+    }
+
+    public function maybe_upgrade()
+    {
+        $versao_instalada = get_option('autocep_db_version');
+
+        if (AUTOCEP_VERSION === $versao_instalada) {
+            return;
+        }
+
+        if (class_exists('AutoCEP_Stats')) {
+            AutoCEP_Stats::create_table();
+        }
+
+        if (class_exists('AutoCEP_Tickets')) {
+            AutoCEP_Tickets::create_table();
+        }
+
+        update_option('autocep_db_version', AUTOCEP_VERSION);
+    }
+
     public function load_textdomain()
     {
         load_plugin_textdomain('autocep', false, dirname(AUTOCEP_PLUGIN_BASENAME) . '/languages');
     }
 
-    /**
-     * Enfileira scripts e estilos no front-end, apenas nas páginas
-     * relevantes (Checkout e/ou página de produto), de acordo com as
-     * opções configuradas no painel administrativo.
-     *
-     * @return void
-     */
     public function enqueue_frontend_assets()
     {
         if (!function_exists('is_checkout') || !class_exists('WooCommerce')) {
@@ -202,19 +163,45 @@ final class AutoCEP_Plugin
             AUTOCEP_VERSION
         );
 
-        // Aplica as cores personalizadas definidas em AutoCEP > Aparência
-        // sobrescrevendo as variáveis CSS usadas pelo autocep-style.css.
         $aparencia = isset($options['appearance']) ? $options['appearance'] : array();
 
         if (!empty($aparencia)) {
+            $mapa_radius = array('nenhum' => '0px', 'pequeno' => '4px', 'medio' => '8px', 'grande' => '16px');
+            $mapa_fonte  = array('pequeno' => '11px', 'medio' => '12px', 'grande' => '14px');
+            $mapa_espaco = array(
+                'compacto' => array('padding' => '8px 10px', 'gap' => '4px'),
+                'normal'   => array('padding' => '10px 12px', 'gap' => '6px'),
+                'espacoso' => array('padding' => '16px 18px', 'gap' => '10px'),
+            );
+            $mapa_peso   = array('normal' => '600', 'negrito' => '800');
+
+            $radius_key  = $aparencia['border_radius'] ?? 'medio';
+            $fonte_key   = $aparencia['font_size'] ?? 'medio';
+            $espaco_key  = $aparencia['spacing'] ?? 'normal';
+            $peso_key    = $aparencia['button_font_weight'] ?? 'normal';
+
+            $radius = $mapa_radius[$radius_key] ?? $mapa_radius['medio'];
+            $fonte  = $mapa_fonte[$fonte_key] ?? $mapa_fonte['medio'];
+            $espaco = $mapa_espaco[$espaco_key] ?? $mapa_espaco['normal'];
+            $peso   = $mapa_peso[$peso_key] ?? $mapa_peso['normal'];
+
             $css_variaveis = sprintf(
-                ':root{--autocep-field-bg:%1$s;--autocep-field-border:%2$s;--autocep-field-text:%3$s;--autocep-button-bg:%4$s;--autocep-button-text:%5$s;--autocep-button-hover-bg:%6$s;}',
+                ':root{--autocep-field-bg:%1$s;--autocep-field-border:%2$s;--autocep-field-text:%3$s;--autocep-button-bg:%4$s;--autocep-button-text:%5$s;--autocep-button-hover-bg:%6$s;--autocep-box-bg:%7$s;--autocep-box-border:%8$s;--autocep-radius:%9$s;--autocep-font-size:%10$s;--autocep-box-padding:%11$s;--autocep-gap:%12$s;--autocep-button-weight:%13$s;--autocep-freeship-bar-color:%14$s;--autocep-freeship-achieved-color:%15$s;}',
                 esc_attr($aparencia['field_bg_color'] ?? '#ffffff'),
                 esc_attr($aparencia['field_border_color'] ?? '#cccccc'),
                 esc_attr($aparencia['field_text_color'] ?? '#333333'),
                 esc_attr($aparencia['button_bg_color'] ?? '#1e1e1e'),
                 esc_attr($aparencia['button_text_color'] ?? '#ffffff'),
-                esc_attr($aparencia['button_hover_bg_color'] ?? '#333333')
+                esc_attr($aparencia['button_hover_bg_color'] ?? '#333333'),
+                esc_attr($aparencia['box_bg_color'] ?? '#ffffff'),
+                esc_attr($aparencia['box_border_color'] ?? '#e5e5e5'),
+                esc_attr($radius),
+                esc_attr($fonte),
+                esc_attr($espaco['padding']),
+                esc_attr($espaco['gap']),
+                esc_attr($peso),
+                esc_attr($aparencia['free_shipping_bar_color'] ?? '#1e1e1e'),
+                esc_attr($aparencia['free_shipping_achieved_color'] ?? '#1a7d36')
             );
 
             wp_add_inline_style('autocep-style', $css_variaveis);
@@ -265,17 +252,13 @@ final class AutoCEP_Plugin
                 'selecting_rate'        => $options['messages']['selecting_rate'],
                 'rate_selected'         => $options['messages']['rate_selected'],
                 'block_checkout_button' => !empty($options['messages']['block_checkout_button']),
+                'select_to_apply'       => __('Selecione uma opção acima para aplicar o frete ao seu pedido.', 'autocep'),
+                'view_instructions'     => __('Ver instruções', 'autocep'),
+                'hide_instructions'     => __('Ocultar instruções', 'autocep'),
             ),
         ));
     }
 
-    /**
-     * Adiciona links personalizados na listagem de plugins.
-     *
-     * @param array $links Links existentes.
-     *
-     * @return array
-     */
     public function plugin_action_links($links)
     {
         $settings_link = sprintf(
@@ -295,19 +278,36 @@ final class AutoCEP_Plugin
         return $links;
     }
 
-    /**
-     * Rotina executada na ativação do plugin: cria a tabela de logs e
-     * grava as opções padrão (somente se ainda não existirem), garantindo
-     * que o comportamento legado continue habilitado por padrão.
-     *
-     * @return void
-     */
+    public function plugin_row_meta($plugin_meta, $plugin_file)
+    {
+        if (AUTOCEP_PLUGIN_BASENAME !== $plugin_file) {
+            return $plugin_meta;
+        }
+
+        foreach ($plugin_meta as $indice => $item) {
+            if (false !== strpos($item, 'tesw.com.br')) {
+                $plugin_meta[$indice] = sprintf(
+                    __('Por %1$s — Dev. %2$s', 'autocep'),
+                    '<a href="' . esc_url('https://tesw.com.br') . '" target="_blank" rel="noopener noreferrer">TESW</a>',
+                    '<a href="' . esc_url('https://www.linkedin.com/in/wanderson-cesar-2710a621b') . '" target="_blank" rel="noopener noreferrer">Wanderson Cesar</a>'
+                );
+                break;
+            }
+        }
+
+        return $plugin_meta;
+    }
+
     public static function activate()
     {
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-logger.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-stats.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-tickets.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-admin.php';
 
         AutoCEP_Logger::create_table();
+        AutoCEP_Stats::create_table();
+        AutoCEP_Tickets::create_table();
 
         if (false === get_option(AUTOCEP_OPTION_KEY)) {
             add_option(AUTOCEP_OPTION_KEY, AutoCEP_Admin::get_default_options());
@@ -316,11 +316,6 @@ final class AutoCEP_Plugin
         flush_rewrite_rules();
     }
 
-    /**
-     * Rotina executada na desativação do plugin.
-     *
-     * @return void
-     */
     public static function deactivate()
     {
         flush_rewrite_rules();
@@ -330,12 +325,6 @@ final class AutoCEP_Plugin
 register_activation_hook(__FILE__, array('AutoCEP_Plugin', 'activate'));
 register_deactivation_hook(__FILE__, array('AutoCEP_Plugin', 'deactivate'));
 
-/**
- * Inicializa o plugin somente depois que todos os plugins (incluindo o
- * WooCommerce) tenham sido carregados.
- *
- * @return void
- */
 function autocep_init_plugin()
 {
     AutoCEP_Plugin::get_instance();
