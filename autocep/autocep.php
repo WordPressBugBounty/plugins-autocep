@@ -2,8 +2,8 @@
 /**
  * Plugin Name: AutoCEP
  * Plugin URI: https://tesw.com.br/plugins/
- * Description: Autocompletar endereço por CEP e simulador de frete completo para WooCommerce — produto, carrinho e checkout — com múltiplas APIs, cache, fallback automático, previsão de entrega com data estimada, barra de progresso de frete grátis, cache de cotações, retirada em loja física por proximidade via Google Maps e testes de conexão em tempo real com as APIs do Melhor Envio e da Frenet, compatível com Fluid Checkout, CartFlows e mais.
- * Version: 2.46
+ * Description: O melhor plugin de CEP e frete do Brasil, completo e 100% gratuito: autocompletar de endereço por CEP (checkout clássico e em blocos), checkout moderno em 3 etapas (Identificação, Entrega e Pagamento), simulador de frete no produto, carrinho e checkout, tabela de frete própria por CEP e peso (Excel/CSV), previsão de entrega, barra de frete grátis, retirada em loja por proximidade, frete por Km e testes de conexão com Melhor Envio e Frenet. Compatível com HPOS, Fluid Checkout, CartFlows e mais.
+ * Version: 2.48
  * Author: TESW | Dev Wanderson Cesar
  * Author URI: https://tesw.com.br
  * Text Domain: autocep
@@ -11,7 +11,7 @@
  * Requires at least: 5.0
  * Requires PHP: 7.4
  * WC requires at least: 4.0
- * WC tested up to: 9.0
+ * WC tested up to: 11.1
  * License: GPL-2.0+
  * License URI: http://www.gnu.org/licenses/gpl-2.0.html
  */
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('AUTOCEP_VERSION', '2.46');
+define('AUTOCEP_VERSION', '2.48');
 define('AUTOCEP_PLUGIN_FILE', __FILE__);
 define('AUTOCEP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTOCEP_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -45,6 +45,12 @@ final class AutoCEP_Plugin
 
     public $store_pickup;
 
+    public $modern_checkout;
+
+    public $checkout_analytics;
+
+    public $order_status;
+
     public static function get_instance()
     {
         if (null === self::$instance) {
@@ -66,12 +72,16 @@ final class AutoCEP_Plugin
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-logger.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-stats.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-tickets.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-feedback.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-admin.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-api.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-maps-service.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-store-pickup.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-km-delivery.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-modern-checkout.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-checkout-analytics.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-order-status.php';
     }
 
     private function init_modules()
@@ -82,6 +92,9 @@ final class AutoCEP_Plugin
         $this->api          = new AutoCEP_Api($this->logger);
         $this->shipping     = new AutoCEP_Shipping($this->logger);
         $this->store_pickup = new AutoCEP_Store_Pickup($this->logger);
+        $this->modern_checkout = new AutoCEP_Modern_Checkout();
+        $this->checkout_analytics = new AutoCEP_Checkout_Analytics();
+        $this->order_status = new AutoCEP_Order_Status();
     }
 
     private function register_hooks()
@@ -92,12 +105,30 @@ final class AutoCEP_Plugin
         add_action('plugins_loaded', array($this, 'load_textdomain'));
         add_action('plugins_loaded', array($this, 'maybe_upgrade'));
         add_filter('woocommerce_shipping_methods', array($this, 'register_shipping_methods'));
+
+        // Tabela de Frete desativada/excluída: a zona dela não pode continuar
+        // no topo da lista "roubando" os clientes das outras zonas.
+        add_action('woocommerce_shipping_zone_method_status_toggled', array($this, 'on_shipping_method_changed'), 10, 3);
+        add_action('woocommerce_shipping_zone_method_deleted', array($this, 'on_shipping_method_changed'), 10, 3);
+    }
+
+    public function on_shipping_method_changed($instance_id, $method_id, $zone_id)
+    {
+        if ('autocep_shipping_table' !== $method_id) {
+            return;
+        }
+
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping-table.php';
+        AutoCEP_Shipping_Table::handle_method_change($instance_id, $method_id, $zone_id);
     }
 
     public function register_shipping_methods($methods)
     {
         $options = AutoCEP_Admin::get_options();
         $config  = isset($options['distance_shipping']) ? $options['distance_shipping'] : array();
+
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping-table.php';
+        $methods['autocep_shipping_table'] = 'AutoCEP_Shipping_Table';
 
         if (!empty($config['pickup_enabled'])) {
             require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-shipping-pickup.php';
@@ -121,6 +152,10 @@ final class AutoCEP_Plugin
 
         if (class_exists('AutoCEP_Tickets')) {
             AutoCEP_Tickets::create_table();
+        }
+
+        if (class_exists('AutoCEP_Feedback')) {
+            AutoCEP_Feedback::create_table();
         }
 
         update_option('autocep_db_version', AUTOCEP_VERSION);
@@ -160,7 +195,7 @@ final class AutoCEP_Plugin
             'autocep-style',
             AUTOCEP_PLUGIN_URL . 'assets/css/autocep-style.css',
             array(),
-            AUTOCEP_VERSION
+            autocep_asset_version('assets/css/autocep-style.css')
         );
 
         $aparencia = isset($options['appearance']) ? $options['appearance'] : array();
@@ -211,7 +246,7 @@ final class AutoCEP_Plugin
             'autocep-frontend',
             AUTOCEP_PLUGIN_URL . 'assets/js/autocep-frontend.js',
             array('jquery'),
-            AUTOCEP_VERSION,
+            autocep_asset_version('assets/js/autocep-frontend.js'),
             true
         );
 
@@ -228,6 +263,8 @@ final class AutoCEP_Plugin
                 'neighborhood_field'   => $options['general']['neighborhood_field'],
                 'auto_focus'           => !empty($options['general']['auto_focus']),
                 'browser_autocomplete' => !empty($options['general']['browser_autocomplete']),
+                'address_suggest'      => !empty($options['general']['address_suggest']),
+                'suggest_min_chars'    => 3,
             ),
             'product_shipping' => array(
                 'enabled'            => !empty($options['product_shipping']['enabled']),
@@ -248,6 +285,7 @@ final class AutoCEP_Plugin
                 'generic_error'         => $options['messages']['generic_error'],
                 'select_variation'      => $options['messages']['select_variation'],
                 'no_street'             => $options['messages']['no_street'],
+                'suggest_need_city'     => __('Para ver sugestões de ruas, preencha primeiro a Cidade e o Estado — ou digite o CEP.', 'autocep'),
                 'select_rate'           => $options['messages']['select_rate'],
                 'selecting_rate'        => $options['messages']['selecting_rate'],
                 'rate_selected'         => $options['messages']['rate_selected'],
@@ -303,11 +341,13 @@ final class AutoCEP_Plugin
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-logger.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-stats.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-tickets.php';
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-feedback.php';
         require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-admin.php';
 
         AutoCEP_Logger::create_table();
         AutoCEP_Stats::create_table();
         AutoCEP_Tickets::create_table();
+        AutoCEP_Feedback::create_table();
 
         if (false === get_option(AUTOCEP_OPTION_KEY)) {
             add_option(AUTOCEP_OPTION_KEY, AutoCEP_Admin::get_default_options());
@@ -322,8 +362,130 @@ final class AutoCEP_Plugin
     }
 }
 
+// Declara compatibilidade com o armazenamento de pedidos de alto desempenho (HPOS)
+// e com o Checkout em Blocos do WooCommerce.
+add_action('before_woocommerce_init', function () {
+    if (class_exists('\Automattic\WooCommerce\Utilities\FeaturesUtil')) {
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
+        \Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility('cart_checkout_blocks', __FILE__, true);
+    }
+});
+
 register_activation_hook(__FILE__, array('AutoCEP_Plugin', 'activate'));
 register_deactivation_hook(__FILE__, array('AutoCEP_Plugin', 'deactivate'));
+
+/**
+ * Versão de um arquivo do front-end para o cache do navegador: a versão do
+ * plugin + a data de modificação do arquivo. Assim, qualquer arquivo
+ * atualizado ganha um endereço novo (?ver=...) e plugins de cache como o
+ * WP Rocket e o navegador do cliente nunca servem uma cópia antiga.
+ *
+ * @param string $caminho Caminho relativo à pasta do plugin.
+ */
+function autocep_asset_version($caminho)
+{
+    $arquivo = AUTOCEP_PLUGIN_DIR . $caminho;
+
+    return file_exists($arquivo) ? AUTOCEP_VERSION . '.' . filemtime($arquivo) : AUTOCEP_VERSION;
+}
+
+/* -------------------------------------------------------------------------
+ * Pagamento na Entrega — AutoCEP
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Carrega a classe do método de pagamento (precisa do WooCommerce carregado).
+ */
+function autocep_load_delivery_gateway()
+{
+    if (!class_exists('AutoCEP_Gateway_Delivery') && class_exists('WC_Payment_Gateway')) {
+        require_once AUTOCEP_PLUGIN_DIR . 'includes/class-autocep-gateway-delivery.php';
+    }
+
+    return class_exists('AutoCEP_Gateway_Delivery');
+}
+
+add_filter('woocommerce_payment_gateways', function ($gateways) {
+    if (autocep_load_delivery_gateway()) {
+        $gateways[] = 'AutoCEP_Gateway_Delivery';
+    }
+
+    return $gateways;
+});
+
+// Forma de pagamento e troco na linha "Método de pagamento" — página de
+// pedido recebido, Minha Conta > Pedidos e e-mails.
+add_filter('woocommerce_get_order_item_totals', function ($linhas, $order) {
+    if ('autocep_entrega' !== $order->get_payment_method() || !isset($linhas['payment_method']) || !autocep_load_delivery_gateway()) {
+        return $linhas;
+    }
+
+    $detalhe = AutoCEP_Gateway_Delivery::describe_order($order);
+
+    if ($detalhe) {
+        $linhas['payment_method']['value'] .= ' — ' . esc_html($detalhe);
+    }
+
+    return $linhas;
+}, 10, 2);
+
+// Na tela do pedido no admin, logo abaixo do endereço de cobrança.
+add_action('woocommerce_admin_order_data_after_billing_address', function ($order) {
+    if ('autocep_entrega' !== $order->get_payment_method() || !autocep_load_delivery_gateway()) {
+        return;
+    }
+
+    $detalhe = AutoCEP_Gateway_Delivery::describe_order($order);
+
+    if ($detalhe) {
+        printf('<p><strong>%s</strong> %s</p>', esc_html__('Pagamento na entrega:', 'autocep'), esc_html($detalhe));
+    }
+});
+
+// Campo "Troco para quanto?" só aparece quando o cliente escolhe Dinheiro.
+add_action('wp_enqueue_scripts', function () {
+    if (!function_exists('is_checkout') || !is_checkout()) {
+        return;
+    }
+
+    $config = get_option('woocommerce_autocep_entrega_settings', array());
+
+    if (empty($config['enabled']) || 'yes' !== $config['enabled']) {
+        return;
+    }
+
+    wp_register_style('autocep-entrega', false, array(), AUTOCEP_VERSION);
+    wp_enqueue_style('autocep-entrega');
+    wp_add_inline_style('autocep-entrega', '
+        .autocep-entrega{margin:8px 0 0;padding:0;border:0}
+        .autocep-entrega__opcoes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+        .autocep-entrega__opcao{display:flex!important;align-items:center;gap:8px;margin:0!important;padding:9px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;font-size:14px;cursor:pointer}
+        .autocep-entrega__opcao:has(input:checked){border-color:#1d4ed8;background:#eff6ff}
+        .autocep-entrega__opcao input{margin:0!important}
+        .autocep-entrega__troco{margin-top:10px}
+        .autocep-entrega__troco[hidden]{display:none!important}
+        .autocep-entrega__troco label{display:block;margin:0 0 4px;font-size:13px;font-weight:600}
+        .autocep-entrega__troco input[type=text]{width:100%;max-width:220px;height:38px;padding:0 10px;border:1px solid #d1d5db;border-radius:6px;font-size:16px}
+        .autocep-entrega__sem-troco{display:flex!important;align-items:center;gap:6px;margin-top:8px!important;font-weight:400!important}
+    ');
+
+    wp_register_script('autocep-entrega', false, array('jquery'), AUTOCEP_VERSION, true);
+    wp_enqueue_script('autocep-entrega');
+    wp_add_inline_script('autocep-entrega', "
+        jQuery(function ($) {
+            function atualizar() {
+                $('.autocep-entrega').each(function () {
+                    var dinheiro = 'dinheiro' === $(this).find('input[name=\"autocep_entrega_forma\"]:checked').val();
+                    var semTroco = $(this).find('input[name=\"autocep_entrega_sem_troco\"]').is(':checked');
+                    $(this).find('.autocep-entrega__troco').prop('hidden', !dinheiro);
+                    $(this).find('#autocep_entrega_troco').prop('disabled', semTroco);
+                });
+            }
+            $(document.body).on('change', '.autocep-entrega input', atualizar).on('updated_checkout', atualizar);
+            atualizar();
+        });
+    ");
+});
 
 function autocep_init_plugin()
 {

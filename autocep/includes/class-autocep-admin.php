@@ -6,7 +6,9 @@ if (!defined('ABSPATH')) {
 
 class AutoCEP_Admin
 {
-    const TABS = array('general', 'product_shipping', 'cart_shipping', 'checkout_shipping', 'growth', 'distance_shipping', 'integrations', 'messages', 'appearance', 'shipping_dashboard', 'support', 'diagnostics');
+    const TABS = array('general', 'product_shipping', 'cart_shipping', 'checkout_shipping', 'modern_checkout', 'post_purchase', 'growth', 'distance_shipping', 'integrations', 'messages', 'appearance', 'shipping_dashboard', 'support', 'feedback', 'diagnostics');
+
+    const REVIEW_URL = 'https://wordpress.org/support/plugin/autocep/reviews/#new-post';
 
     public function __construct()
     {
@@ -16,6 +18,7 @@ class AutoCEP_Admin
         add_action('admin_head', array($this, 'print_menu_badge_style'));
         add_action('wp_ajax_autocep_send_support_ticket', array($this, 'ajax_send_support_ticket'));
         add_action('wp_ajax_autocep_toggle_ticket_status', array($this, 'ajax_toggle_ticket_status'));
+        add_action('wp_ajax_autocep_send_feedback', array($this, 'ajax_send_feedback'));
         add_action('wp_ajax_autocep_test_distance', array($this, 'ajax_test_distance'));
         add_action('wp_ajax_autocep_check_google_maps_status', array($this, 'ajax_check_google_maps_status'));
         add_action('wp_ajax_autocep_test_melhor_envio', array($this, 'ajax_test_melhor_envio'));
@@ -63,10 +66,13 @@ class AutoCEP_Admin
 
         $submenus = array(
             ''                    => __('🏠 Visão Geral', 'autocep'),
+            '&tab=checkout_shipping' => __('🛒 Checkout', 'autocep'),
+            '&tab=post_purchase'  => __('✅ Pós-Compra', 'autocep'),
             '&tab=shipping_dashboard' => __('📊 Analytics', 'autocep'),
             '&tab=growth'         => __('🚀 Growth Marketing', 'autocep'),
             '&tab=distance_shipping' => __('📍 Retirada em Loja', 'autocep'),
             '&tab=support'        => __('🎧 Suporte Técnico', 'autocep'),
+            '&tab=feedback'       => __('⭐ Avalie o Plugin', 'autocep'),
             '&tab=diagnostics'    => __('🔧 Diagnóstico', 'autocep'),
         );
 
@@ -98,6 +104,8 @@ class AutoCEP_Admin
                 'auto_focus'           => 1,
                 'cache_days'           => 30,
                 'browser_autocomplete' => 1,
+                'address_suggest'      => 1,
+                'address_suggest_provider' => 'auto',
                 'shipping_cache_hours' => 24,
                 'stats_enabled'        => 1,
             ),
@@ -115,6 +123,43 @@ class AutoCEP_Admin
             'checkout_shipping' => array(
                 'enabled'  => 0,
                 'position' => 'woocommerce_before_order_notes',
+            ),
+
+            'modern_checkout' => array(
+                'enabled'        => 0,
+                'compact'        => 0,
+                'step1_title'    => __('Identificação', 'autocep'),
+                'step2_title'    => __('Entrega', 'autocep'),
+                'step3_title'    => __('Pagamento', 'autocep'),
+                'next_label'     => __('Continuar', 'autocep'),
+                'accent_color'   => '#1d4ed8',
+                'pix_message'    => __('Ao finalizar, o QR Code e o código Pix copia e cola aparecem na próxima tela. A aprovação é imediata.', 'autocep'),
+                'card_message'   => __('Pagamento seguro: os dados do cartão são enviados criptografados direto para a operadora.', 'autocep'),
+                'boleto_message' => __('O boleto é gerado ao finalizar o pedido. A compensação leva até 3 dias úteis e o envio acontece após a confirmação.', 'autocep'),
+                'pix_thankyou'   => 1,
+                'account_notice' => 1,
+                'account_message' => '',
+                'account_mode'   => 'woocommerce',
+                'ship_different' => 'unchecked',
+                'form_width'     => 580,
+                'summary_width'  => 340,
+                'field_height'   => 38,
+                'simulator'      => 'top',
+                'fields'         => array(),
+                'custom_fields'  => array(),
+            ),
+
+            'order_status' => array(
+                'enabled'         => 0,
+                'paid_on_load'    => 1,
+                'redirect_url'    => '',
+                'redirect_delay'  => 4,
+                'msg_processing'  => __('Pagamento aprovado! Obrigado pela sua compra. Pedido nº {pedido}.', 'autocep'),
+                'msg_completed'   => __('Seu pedido nº {pedido} foi concluído. Obrigado!', 'autocep'),
+                'msg_on-hold'     => __('Seu pedido nº {pedido} está aguardando a confirmação do pagamento.', 'autocep'),
+                'msg_failed'      => __('O pagamento do pedido nº {pedido} não foi aprovado. Tente novamente ou escolha outra forma de pagamento.', 'autocep'),
+                'msg_cancelled'   => __('O pedido nº {pedido} foi cancelado.', 'autocep'),
+                'msg_refunded'    => __('O pedido nº {pedido} foi reembolsado.', 'autocep'),
             ),
 
             'delivery_estimate' => array(
@@ -247,6 +292,8 @@ class AutoCEP_Admin
         $this->register_product_shipping_tab_fields();
         $this->register_cart_shipping_tab_fields();
         $this->register_checkout_shipping_tab_fields();
+        $this->register_modern_checkout_tab_fields();
+        $this->register_post_purchase_tab_fields();
         $this->register_growth_tab_fields();
         $this->register_distance_shipping_tab_fields();
         $this->register_integrations_tab_fields();
@@ -480,6 +527,22 @@ class AutoCEP_Admin
             $this->render_checkbox('general', 'browser_autocomplete', __('Ativar sugestões automáticas do navegador (autocomplete) enquanto o cliente digita nos campos de endereço, com base no histórico de preenchimentos anteriores.', 'autocep'));
         }, $page, 'autocep_general_checkout');
 
+        add_settings_field('address_suggest', __('Sugestões de Endereço ao Digitar', 'autocep'), function () {
+            $this->render_checkbox('general', 'address_suggest', __('Mostrar uma lista de ruas reais enquanto o cliente digita no campo Endereço. Ao escolher, preenche rua, bairro, cidade, estado e o CEP — ideal para quem não sabe o CEP.', 'autocep'));
+            echo '<p style="margin-top:8px;">';
+            $this->render_select('general', 'address_suggest_provider', array(
+                'auto'   => __('Automático — ViaCEP quando houver cidade e estado; Google Maps quando houver chave de API (recomendado)', 'autocep'),
+                'viacep' => __('Somente ViaCEP — grátis (precisa da cidade e do estado preenchidos)', 'autocep'),
+                'google' => __('Somente Google Maps — não precisa da cidade (usa a chave de API da aba Retirada em Loja; cobrado pelo Google)', 'autocep'),
+            ));
+            echo '</p>';
+
+            $tem_chave = class_exists('AutoCEP_Maps_Service') && '' !== AutoCEP_Maps_Service::get_api_key();
+            echo '<p class="description">' . esc_html($tem_chave
+                ? __('Chave do Google encontrada. Para usar o Google, ative a "Places API (New)" no Google Cloud para essa chave. A consulta passa pelo servidor: a chave nunca aparece para o cliente.', 'autocep')
+                : __('Sem chave do Google configurada: as sugestões usam o ViaCEP (grátis), depois que o cliente informa a cidade e o estado.', 'autocep')) . '</p>';
+        }, $page, 'autocep_general_checkout');
+
         add_settings_section('autocep_general_apis', __('APIs de Consulta de CEP', 'autocep'), function () {
             echo '<p>' . esc_html__('Selecione quais APIs ficam ativas e defina a ordem de prioridade (1 = primeira a ser consultada). Se uma API falhar ou expirar o tempo limite, a próxima da lista é consultada automaticamente.', 'autocep') . '</p>';
         }, $page);
@@ -576,6 +639,364 @@ class AutoCEP_Admin
         add_settings_field('position', __('Posição no Formulário', 'autocep'), function () {
             $this->render_select('checkout_shipping', 'position', self::get_checkout_hook_choices());
         }, $page, 'autocep_checkout_shipping_main');
+    }
+
+    private function register_post_purchase_tab_fields()
+    {
+        $page = 'autocep_tab_post_purchase';
+
+        add_settings_section('autocep_post_purchase_main', __('Status do Pedido em Tempo Real', 'autocep'), function () {
+            echo '<p>' . esc_html__('Na página de pedido recebido (e na página do pedido em Minha Conta), o AutoCEP acompanha o status do pedido enquanto o cliente está na tela — por exemplo, aguardando o Pix. Quando o status muda, aparece uma mensagem e, se o pagamento foi aprovado, o cliente pode ser levado para a sua página de agradecimento.', 'autocep') . '</p>';
+            echo '<p class="description">' . esc_html__('Seguro e leve: só o dono do pedido consulta o status (pela chave secreta do pedido), a verificação roda apenas nessas páginas, a cada 5 segundos, por até 15 minutos.', 'autocep') . '</p>';
+        }, $page);
+
+        add_settings_field('enabled', __('Ativar', 'autocep'), function () {
+            $this->render_checkbox('order_status', 'enabled', __('Mostrar mensagem quando o status do pedido mudar (pagamento aprovado, falhou, cancelado...).', 'autocep'));
+        }, $page, 'autocep_post_purchase_main');
+
+        add_settings_section('autocep_post_purchase_redirect', __('Página de Obrigado (Redirecionamento)', 'autocep'), function () {
+            echo '<p>' . esc_html__('Quando o pagamento for aprovado, levar o cliente para uma página sua (ex.: página de agradecimento, grupo VIP, área de membros). Deixe em branco para ele continuar na página de pedido recebido do WooCommerce. Pedidos com Pix ou boleto pendente continuam na página do WooCommerce até o pagamento ser aprovado — assim o cliente não perde o QR Code ou o boleto.', 'autocep') . '</p>';
+        }, $page);
+
+        add_settings_field('redirect_url', __('Endereço da Página', 'autocep'), function () {
+            $this->render_text('order_status', 'redirect_url', __('Ex.: https://sualoja.com.br/obrigado/ — use {pedido} para incluir o número do pedido (ex.: https://sualoja.com.br/obrigado/?pedido={pedido}).', 'autocep'));
+        }, $page, 'autocep_post_purchase_redirect');
+
+        add_settings_field('redirect_delay', __('Esperar Antes de Redirecionar', 'autocep'), function () {
+            $this->render_number('order_status', 'redirect_delay', 0, 30, __('Segundos com a mensagem na tela antes de ir para a página (0 = imediato).', 'autocep'));
+        }, $page, 'autocep_post_purchase_redirect');
+
+        add_settings_field('paid_on_load', __('Pedido Já Pago', 'autocep'), function () {
+            $this->render_checkbox('order_status', 'paid_on_load', __('Também mostrar a mensagem e redirecionar quando o pedido já chega aprovado (ex.: cartão de crédito aprovado na hora).', 'autocep'));
+        }, $page, 'autocep_post_purchase_redirect');
+
+        add_settings_section('autocep_post_purchase_messages', __('Mensagens por Status', 'autocep'), function () {
+            echo '<p>' . esc_html__('Use {pedido} para o número do pedido e {nome} para o primeiro nome do cliente. Deixe em branco para não mostrar mensagem naquele status.', 'autocep') . '</p>';
+        }, $page);
+
+        foreach (AutoCEP_Order_Status::get_statuses() as $status => $rotulo) {
+            add_settings_field('msg_' . $status, $rotulo, function () use ($status) {
+                $this->render_textarea('order_status', 'msg_' . $status);
+            }, $page, 'autocep_post_purchase_messages');
+        }
+    }
+
+    private function register_modern_checkout_tab_fields()
+    {
+        // Mesma aba do simulador de frete do checkout: tudo de checkout fica
+        // numa aba só (Checkout), logo abaixo do simulador.
+        $page = 'autocep_tab_checkout_shipping';
+
+        add_settings_section('autocep_modern_checkout_main', __('Checkout Moderno (Multietapas)', 'autocep'), function () {
+            echo '<p>' . esc_html__('Divide o checkout clássico do WooCommerce em 3 etapas — Identificação, Entrega e Pagamento — com resumo do pedido sempre visível, validação a cada etapa e layout que se adapta à forma de pagamento escolhida. Todos os campos continuam sendo os do WooCommerce, então gateways de pagamento, plugins de campos brasileiros (CPF/CNPJ, número, bairro) e o autocompletar de CEP do AutoCEP continuam funcionando.', 'autocep') . '</p>';
+
+            $motivo = class_exists('AutoCEP_Modern_Checkout') ? AutoCEP_Modern_Checkout::get_incompatibility_reason() : '';
+
+            if ($motivo) {
+                printf('<div class="notice notice-warning inline"><p>%s</p></div>', esc_html($motivo));
+            }
+        }, $page);
+
+        add_settings_field('enabled', __('Ativar Checkout Moderno', 'autocep'), function () {
+            $this->render_checkbox('modern_checkout', 'enabled', __('Usar o checkout do AutoCEP em etapas (Identificação → Entrega → Pagamento), com o gerenciamento de campos abaixo.', 'autocep'));
+            echo '<p class="description">' . esc_html__('Deixe desmarcado se a loja já usa outro checkout personalizado (CartFlows, Fluid Checkout, checkout do tema ou do Elementor): com a opção desligada, o AutoCEP não altera nada no checkout — nem o layout nem os campos.', 'autocep') . '</p>';
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('simulator', __('Simulador no Checkout Moderno', 'autocep'), function () {
+            $this->render_select('modern_checkout', 'simulator', array(
+                'top'  => __('No topo da etapa Entrega (padrão)', 'autocep'),
+                'hide' => __('Ocultar — as formas de entrega já aparecem na etapa Entrega', 'autocep'),
+            ));
+            echo '<p class="description">' . esc_html__('Onde a caixa "Simular Frete" do AutoCEP aparece no Checkout Moderno (quando ativada na aba Checkout). No topo, o CEP digitado nela preenche o endereço e as formas de entrega da etapa.', 'autocep') . '</p>';
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('account_mode', __('Conta do Cliente', 'autocep'), function () {
+            $this->render_select('modern_checkout', 'account_mode', array(
+                'woocommerce' => __('Seguir a configuração do WooCommerce (padrão)', 'autocep'),
+                'optional'    => __('Opcional — o cliente escolhe criar conta ou comprar sem conta (recomendado)', 'autocep'),
+                'required'    => __('Obrigatória — toda compra cria uma conta', 'autocep'),
+                'guest'       => __('Sem conta — compra sempre como visitante', 'autocep'),
+            ));
+            echo '<p class="description">' . esc_html__('Exigir conta faz muitos clientes desistirem; "Opcional" costuma vender mais. Vale enquanto o Checkout Moderno estiver ativo, sem alterar as configurações do WooCommerce.', 'autocep') . '</p>';
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('account_notice', __('Aviso de Criação de Conta', 'autocep'), function () {
+            $this->render_checkbox('modern_checkout', 'account_notice', __('Na etapa Identificação, explicar ao cliente que não tem conta por que e como ela é criada, com o link "Já tem conta? Entrar".', 'autocep'));
+            echo '<p style="margin-top:8px;">' . esc_html__('Texto personalizado (opcional — deixe em branco para o texto automático, que se adapta à configuração da loja). Use {email} para mostrar o e-mail digitado pelo cliente:', 'autocep') . '</p>';
+            $this->render_textarea('modern_checkout', 'account_message');
+
+            if (function_exists('WC') && WC()->checkout()) {
+                $obrigatoria = WC()->checkout()->is_registration_required();
+                $permitida   = WC()->checkout()->is_registration_enabled();
+                $auto        = 'yes' === get_option('woocommerce_registration_generate_password');
+
+                printf(
+                    '<p class="description">%s <a href="%s">%s</a></p>',
+                    esc_html($obrigatoria
+                        ? ($auto ? __('Sua loja hoje: conta obrigatória, senha gerada automaticamente e enviada por e-mail.', 'autocep') : __('Sua loja hoje: conta obrigatória — o cliente cria uma senha no checkout.', 'autocep'))
+                        : ($permitida ? __('Sua loja hoje: compra sem conta permitida; criar conta é opcional.', 'autocep') : __('Sua loja hoje: compra sem conta, sem opção de criar conta no checkout.', 'autocep'))),
+                    esc_url(admin_url('admin.php?page=wc-settings&tab=account')),
+                    esc_html__('Alterar em WooCommerce > Configurações > Contas e privacidade', 'autocep')
+                );
+            }
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('compact', __('Modo Compacto', 'autocep'), function () {
+            $this->render_checkbox('modern_checkout', 'compact', __('Esconder campos opcionais (empresa, complemento quando não usado para o bairro, observações do pedido) atrás de links "+ adicionar", deixando cada etapa mais curta.', 'autocep'));
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('step_titles', __('Títulos das Etapas', 'autocep'), function () {
+            foreach (array('step1_title', 'step2_title', 'step3_title') as $indice => $campo) {
+                printf('<p><span style="display:inline-block;width:60px;">%s</span>', esc_html(sprintf(__('Etapa %d', 'autocep'), $indice + 1)));
+                $this->render_text('modern_checkout', $campo);
+                echo '</p>';
+            }
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('next_label', __('Texto do Botão de Avançar', 'autocep'), function () {
+            $this->render_text('modern_checkout', 'next_label');
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('ship_different', __('Entregar em Endereço Diferente', 'autocep'), function () {
+            $this->render_select('modern_checkout', 'ship_different', array(
+                'unchecked'   => __('Começa desmarcado — o cliente marca se quiser entregar em outro endereço (padrão)', 'autocep'),
+                'woocommerce' => __('Seguir a configuração do WooCommerce (Destino de entrega)', 'autocep'),
+            ));
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('layout_size', __('Tamanho do Checkout', 'autocep'), function () {
+            echo '<p><label style="display:inline-block;width:210px;">' . esc_html__('Largura do formulário (px)', 'autocep') . '</label>';
+            $this->render_number('modern_checkout', 'form_width', 400, 1200);
+            echo '</p><p><label style="display:inline-block;width:210px;">' . esc_html__('Largura do resumo do pedido (px)', 'autocep') . '</label>';
+            $this->render_number('modern_checkout', 'summary_width', 260, 600);
+            echo '</p><p><label style="display:inline-block;width:210px;">' . esc_html__('Altura dos campos (px)', 'autocep') . '</label>';
+            $this->render_number('modern_checkout', 'field_height', 32, 60);
+            echo '</p><p class="description">' . esc_html__('Padrão: formulário 580, resumo 340, campos 38. As larguras valem no computador (a partir de 992px); no celular o checkout ocupa a tela toda. No celular os campos têm no mínimo 16px de fonte para o iPhone não dar zoom.', 'autocep') . '</p>';
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_field('accent_color', __('Cor de Destaque', 'autocep'), function () {
+            $this->render_color_field('modern_checkout', 'accent_color');
+            echo '<p class="description">' . esc_html__('Usada na barra de etapas, nos botões e na forma de pagamento selecionada.', 'autocep') . '</p>';
+        }, $page, 'autocep_modern_checkout_main');
+
+        add_settings_section('autocep_modern_checkout_payment', __('Mensagens por Forma de Pagamento', 'autocep'), function () {
+            echo '<p>' . esc_html__('Exibidas na etapa de pagamento conforme o método escolhido. O tipo (Pix, cartão ou boleto) é detectado pelo nome/ID de cada gateway. Deixe em branco para não exibir.', 'autocep') . '</p>';
+        }, $page);
+
+        add_settings_field('pix_message', __('Pix', 'autocep'), function () {
+            $this->render_textarea('modern_checkout', 'pix_message');
+        }, $page, 'autocep_modern_checkout_payment');
+
+        add_settings_field('card_message', __('Cartão de Crédito', 'autocep'), function () {
+            $this->render_textarea('modern_checkout', 'card_message');
+        }, $page, 'autocep_modern_checkout_payment');
+
+        add_settings_field('boleto_message', __('Boleto', 'autocep'), function () {
+            $this->render_textarea('modern_checkout', 'boleto_message');
+        }, $page, 'autocep_modern_checkout_payment');
+
+        add_settings_field('pix_thankyou', __('Pix no Pedido Recebido', 'autocep'), function () {
+            $this->render_checkbox('modern_checkout', 'pix_thankyou', __('Na página de pedido recebido, destacar o QR Code Pix e adicionar o botão "Copiar código Pix" (funciona com a maioria dos gateways de Pix).', 'autocep'));
+        }, $page, 'autocep_modern_checkout_payment');
+
+        add_settings_section('autocep_modern_checkout_fields', __('Campos do Checkout', 'autocep'), function () {
+            echo '<p>' . esc_html__('Menos campos = mais vendas. Esconda o que a loja não usa, defina o que é obrigatório e crie campos extras. Vale enquanto o Checkout Moderno estiver ativo. E-mail, nome, CEP, endereço, cidade, estado e país são sempre exibidos, pois são necessários para o pedido e o frete.', 'autocep') . '</p>';
+        }, $page);
+
+        add_settings_field('fields', __('Campos Padrão', 'autocep'), array($this, 'render_checkout_fields_table'), $page, 'autocep_modern_checkout_fields');
+        add_settings_field('custom_fields', __('Campos Extras', 'autocep'), array($this, 'render_custom_fields_editor'), $page, 'autocep_modern_checkout_fields');
+
+        add_settings_section('autocep_checkout_delivery_payment', __('Pagamento na Entrega', 'autocep'), function () {
+            $config = get_option('woocommerce_autocep_entrega_settings', array());
+            $ativo  = !empty($config['enabled']) && 'yes' === $config['enabled'];
+            $url    = admin_url('admin.php?page=wc-settings&tab=checkout&section=autocep_entrega');
+
+            echo '<p>' . esc_html__('Forma de pagamento do AutoCEP para delivery e retirada: o cliente escolhe como vai pagar ao receber — dinheiro (com "Troco para quanto?"), Pix na entrega, cartão de débito/crédito na maquininha ou vale-refeição. Você escolhe as formas aceitas e para quais fretes ela aparece (ex.: só Motoboy e Retirada). A escolha e o troco aparecem no pedido e nos e-mails.', 'autocep') . '</p>';
+
+            printf(
+                '<p><span style="display:inline-block;padding:2px 10px;border-radius:12px;font-weight:600;%1$s">%2$s</span> &nbsp; <a class="button button-primary" href="%3$s">%4$s</a></p>',
+                $ativo ? 'background:#dcfce7;color:#15803d;' : 'background:#f3f4f6;color:#4b5563;',
+                esc_html($ativo ? __('Ativo', 'autocep') : __('Desativado', 'autocep')),
+                esc_url($url),
+                esc_html__('Configurar Pagamento na Entrega', 'autocep')
+            );
+
+            echo '<p class="description">' . esc_html__('Ele também aparece em WooCommerce > Configurações > Pagamentos, como "Pagamento na Entrega — AutoCEP".', 'autocep') . '</p>';
+        }, $page);
+    }
+
+    public function render_checkout_fields_table()
+    {
+        $options = self::get_options();
+        $salvos  = isset($options['modern_checkout']['fields']) ? $options['modern_checkout']['fields'] : array();
+        $base    = AUTOCEP_OPTION_KEY . '[modern_checkout][fields]';
+        ?>
+        <table class="widefat striped" style="max-width:720px;">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e('Campo', 'autocep'); ?></th>
+                    <th style="width:80px;"><?php esc_html_e('Exibir', 'autocep'); ?></th>
+                    <th style="width:190px;"><?php esc_html_e('Preenchimento', 'autocep'); ?></th>
+                    <th><?php esc_html_e('Rótulo personalizado', 'autocep'); ?></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach (AutoCEP_Modern_Checkout::get_managed_fields() as $chave => $rotulo) :
+                    $atual    = isset($salvos[$chave]) ? $salvos[$chave] : array();
+                    $exibir   = !isset($atual['show']) || !empty($atual['show']);
+                    $obrig    = isset($atual['required']) ? $atual['required'] : '';
+                    $nome     = $base . '[' . $chave . ']';
+                    ?>
+                    <tr>
+                        <td><strong><?php echo esc_html($rotulo); ?></strong></td>
+                        <td>
+                            <input type="hidden" name="<?php echo esc_attr($nome . '[show]'); ?>" value="0" />
+                            <input type="checkbox" name="<?php echo esc_attr($nome . '[show]'); ?>" value="1" <?php checked($exibir); ?> aria-label="<?php echo esc_attr(sprintf(__('Exibir %s', 'autocep'), $rotulo)); ?>" />
+                        </td>
+                        <td>
+                            <select name="<?php echo esc_attr($nome . '[required]'); ?>">
+                                <option value="" <?php selected($obrig, ''); ?>><?php esc_html_e('Padrão do WooCommerce', 'autocep'); ?></option>
+                                <option value="yes" <?php selected($obrig, 'yes'); ?>><?php esc_html_e('Obrigatório', 'autocep'); ?></option>
+                                <option value="no" <?php selected($obrig, 'no'); ?>><?php esc_html_e('Opcional', 'autocep'); ?></option>
+                            </select>
+                        </td>
+                        <td>
+                            <input type="text" class="regular-text" style="width:100%;" name="<?php echo esc_attr($nome . '[label]'); ?>" value="<?php echo esc_attr(isset($atual['label']) ? $atual['label'] : ''); ?>" placeholder="<?php echo esc_attr($rotulo); ?>" />
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+        <p class="description"><?php esc_html_e('Empresa, complemento e sobrenome valem também para o endereço de entrega diferente.', 'autocep'); ?></p>
+        <?php
+    }
+
+    /**
+     * Campos reais do checkout (WooCommerce + outros plugins) para comparar
+     * identificadores. Fora do checkout o WooCommerce pode não estar
+     * disponível; nesse caso devolve null e a checagem de conflito é pulada.
+     *
+     * @return array|null
+     */
+    private static function get_checkout_fields_snapshot()
+    {
+        static $campos = false;
+
+        if (false !== $campos) {
+            return $campos;
+        }
+
+        $campos = null;
+
+        if (function_exists('WC') && is_object(WC()) && method_exists(WC(), 'checkout') && WC()->checkout()) {
+            $obtidos = WC()->checkout()->get_checkout_fields();
+            $campos  = is_array($obtidos) ? $obtidos : null;
+        }
+
+        return $campos;
+    }
+
+    public function render_custom_fields_editor()
+    {
+        $options = self::get_options();
+        $campos  = isset($options['modern_checkout']['custom_fields']) && is_array($options['modern_checkout']['custom_fields'])
+            ? array_values($options['modern_checkout']['custom_fields'])
+            : array();
+        $tipos   = AutoCEP_Modern_Checkout::get_custom_field_types();
+        $base    = AUTOCEP_OPTION_KEY . '[modern_checkout][custom_fields]';
+
+        // Linha de um campo; "__i__" é trocado pelo índice no modelo do JS.
+        $linha = function ($indice, $campo) use ($tipos, $base) {
+            $n = $base . '[' . $indice . ']';
+            ob_start();
+            ?>
+            <?php
+            $aviso_campo = isset($campo['key']) ? AutoCEP_Modern_Checkout::validate_custom_field($campo, self::get_checkout_fields_snapshot()) : '';
+            ?>
+            <tr class="autocep-cf-row">
+                <td>
+                    <input type="hidden" name="<?php echo esc_attr($n . '[key]'); ?>" value="<?php echo esc_attr(isset($campo['key']) ? $campo['key'] : ''); ?>" />
+                    <input type="text" style="width:100%;" name="<?php echo esc_attr($n . '[label]'); ?>" value="<?php echo esc_attr(isset($campo['label']) ? $campo['label'] : ''); ?>" placeholder="<?php esc_attr_e('Ex.: Ponto de referência', 'autocep'); ?>" />
+                </td>
+                <td>
+                    <select name="<?php echo esc_attr($n . '[type]'); ?>" class="autocep-cf-type">
+                        <?php foreach ($tipos as $valor => $rotulo) : ?>
+                            <option value="<?php echo esc_attr($valor); ?>" <?php selected(isset($campo['type']) ? $campo['type'] : 'text', $valor); ?>><?php echo esc_html($rotulo); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="text" style="width:100%;margin-top:4px;" class="autocep-cf-options" name="<?php echo esc_attr($n . '[options]'); ?>" value="<?php echo esc_attr(isset($campo['options']) ? $campo['options'] : ''); ?>" placeholder="<?php esc_attr_e('Opções separadas por vírgula', 'autocep'); ?>" />
+                </td>
+                <td>
+                    <select name="<?php echo esc_attr($n . '[step]'); ?>">
+                        <option value="1" <?php selected(isset($campo['step']) ? (int) $campo['step'] : 2, 1); ?>><?php esc_html_e('Identificação', 'autocep'); ?></option>
+                        <option value="2" <?php selected(isset($campo['step']) ? (int) $campo['step'] : 2, 2); ?>><?php esc_html_e('Entrega', 'autocep'); ?></option>
+                    </select>
+                </td>
+                <td style="text-align:center;">
+                    <input type="hidden" name="<?php echo esc_attr($n . '[required]'); ?>" value="0" />
+                    <input type="checkbox" name="<?php echo esc_attr($n . '[required]'); ?>" value="1" <?php checked(!empty($campo['required'])); ?> aria-label="<?php esc_attr_e('Obrigatório', 'autocep'); ?>" />
+                </td>
+                <td><button type="button" class="button-link-delete autocep-cf-remove"><?php esc_html_e('Remover', 'autocep'); ?></button></td>
+            </tr>
+            <?php if ('' !== $aviso_campo) : ?>
+                <tr class="autocep-cf-warning"><td colspan="5" style="color:#b45309;background:#fffbeb;">⚠ <?php echo esc_html(sprintf(__('Este campo não aparece no checkout: %s', 'autocep'), $aviso_campo)); ?></td></tr>
+            <?php endif; ?>
+            <?php
+            return ob_get_clean();
+        };
+        ?>
+        <table class="widefat striped" style="max-width:900px;" id="autocep-cf-table">
+            <thead>
+                <tr>
+                    <th><?php esc_html_e('Rótulo', 'autocep'); ?></th>
+                    <th style="width:220px;"><?php esc_html_e('Tipo', 'autocep'); ?></th>
+                    <th style="width:140px;"><?php esc_html_e('Etapa', 'autocep'); ?></th>
+                    <th style="width:90px;"><?php esc_html_e('Obrigatório', 'autocep'); ?></th>
+                    <th style="width:80px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($campos as $indice => $campo) {
+                    echo $linha($indice, $campo); // phpcs:ignore WordPress.Security.EscapeOutput -- montado com esc_* acima.
+                } ?>
+            </tbody>
+        </table>
+        <p>
+            <button type="button" class="button" id="autocep-cf-add"><?php esc_html_e('+ Adicionar campo', 'autocep'); ?></button>
+        </p>
+        <p class="description"><?php esc_html_e('O valor preenchido pelo cliente fica salvo no pedido e aparece na tela do pedido (abaixo do endereço de cobrança) e nos e-mails.', 'autocep'); ?></p>
+        <p class="description"><?php esc_html_e('Segurança do checkout: antes de salvar, o AutoCEP verifica se o WooCommerce aceita o campo (rótulo preenchido, tipo suportado, lista com opções, identificador sem conflito com outros campos). Campos que não passam não são adicionados e o motivo aparece no topo da página. Até 20 campos extras.', 'autocep'); ?></p>
+        <script type="text/html" id="autocep-cf-template"><?php echo $linha('__i__', array()); // phpcs:ignore WordPress.Security.EscapeOutput ?></script>
+        <script>
+            jQuery(function ($) {
+                var $corpo = $('#autocep-cf-table tbody');
+
+                function atualizarOpcoes($linha) {
+                    $linha.find('.autocep-cf-options').toggle('select' === $linha.find('.autocep-cf-type').val());
+                }
+
+                $corpo.find('.autocep-cf-row').each(function () { atualizarOpcoes($(this)); });
+
+                $('#autocep-cf-add').on('click', function () {
+                    // Índice único, para não sobrescrever linhas já existentes.
+                    var indice = Date.now();
+                    var $nova  = $($('#autocep-cf-template').html().replace(/__i__/g, indice));
+
+                    $corpo.append($nova);
+                    atualizarOpcoes($nova);
+                    $nova.find('input[type="text"]').first().trigger('focus');
+                });
+
+                $corpo.on('click', '.autocep-cf-remove', function () {
+                    $(this).closest('tr').remove();
+                });
+
+                $corpo.on('change', '.autocep-cf-type', function () {
+                    atualizarOpcoes($(this).closest('tr'));
+                });
+            });
+        </script>
+        <?php
     }
 
     private function register_messages_tab_fields()
@@ -744,6 +1165,19 @@ class AutoCEP_Admin
         $name    = sprintf('%s[%s][%s]', AUTOCEP_OPTION_KEY, $grupo, $campo);
 
         printf('<input type="text" class="regular-text" name="%s" value="%s" />', esc_attr($name), esc_attr($valor));
+
+        if ($descricao) {
+            printf('<p class="description">%s</p>', esc_html($descricao));
+        }
+    }
+
+    private function render_textarea($grupo, $campo, $descricao = '')
+    {
+        $options = self::get_options();
+        $valor   = isset($options[$grupo][$campo]) ? $options[$grupo][$campo] : '';
+        $name    = sprintf('%s[%s][%s]', AUTOCEP_OPTION_KEY, $grupo, $campo);
+
+        printf('<textarea class="large-text" rows="2" name="%s">%s</textarea>', esc_attr($name), esc_textarea($valor));
 
         if ($descricao) {
             printf('<p class="description">%s</p>', esc_html($descricao));
@@ -993,6 +1427,7 @@ class AutoCEP_Admin
 
         $inicio    = microtime(true);
         $servico   = new AutoCEP_Maps_Service();
+        delete_transient(AutoCEP_Maps_Service::PAUSE_KEY); // o teste consulta o Google de verdade, mesmo em pausa.
         $resultado = $servico->get_distance_km($cep_teste_a, $cep_teste_b);
         $tempo_ms  = round((microtime(true) - $inicio) * 1000);
         $fonte     = $servico->ultima_fonte;
@@ -1277,6 +1712,7 @@ class AutoCEP_Admin
             : $endereco_b['localidade'] . ' - ' . $endereco_b['uf'];
 
         $servico = new AutoCEP_Maps_Service();
+        delete_transient(AutoCEP_Maps_Service::PAUSE_KEY); // o teste consulta o Google de verdade, mesmo em pausa.
         $resultado = $servico->get_distance_km($cep_a, $cep_b);
         $fonte     = $servico->ultima_fonte;
 
@@ -1583,6 +2019,57 @@ class AutoCEP_Admin
         wp_send_json_success(array('status' => $status));
     }
 
+    public function ajax_send_feedback()
+    {
+        check_ajax_referer(AUTOCEP_ADMIN_NONCE_ACTION, 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Sem permissão.', 'autocep')));
+        }
+
+        if (!class_exists('AutoCEP_Feedback')) {
+            wp_send_json_error(array('message' => __('Módulo de avaliação não disponível.', 'autocep')));
+        }
+
+        $nota       = isset($_POST['nota']) ? absint($_POST['nota']) : 0;
+        $comentario = sanitize_textarea_field(wp_unslash($_POST['comentario'] ?? ''));
+        $sugestao   = sanitize_textarea_field(wp_unslash($_POST['sugestao'] ?? ''));
+
+        if ($nota < 1 || $nota > 5) {
+            wp_send_json_error(array('message' => __('Escolha de 1 a 5 estrelas.', 'autocep')));
+        }
+
+        AutoCEP_Feedback::create_feedback($nota, $comentario, $sugestao);
+
+        $estrelas = str_repeat('★', $nota) . str_repeat('☆', 5 - $nota);
+
+        $corpo  = "=== NOVA AVALIAÇÃO AUTOCEP ===\n\n";
+        $corpo .= "Nota: {$estrelas} ({$nota}/5)\n\n";
+        $corpo .= "--- Comentário ---\n" . ($comentario ? $comentario : '(vazio)') . "\n\n";
+        $corpo .= "--- Sugestões ---\n" . ($sugestao ? $sugestao : '(vazio)') . "\n\n";
+        $corpo .= "--- Informações do Sistema ---\n";
+        $corpo .= "AutoCEP: " . AUTOCEP_VERSION . "\n";
+        $corpo .= "WordPress: " . get_bloginfo('version') . "\n";
+        $corpo .= "WooCommerce: " . (defined('WC_VERSION') ? WC_VERSION : 'N/D') . "\n";
+        $corpo .= "PHP: " . PHP_VERSION . "\n";
+        $corpo .= "Site: " . get_site_url() . "\n";
+
+        $enviado = wp_mail(
+            'teswinfor@gmail.com',
+            sprintf('[AutoCEP Avaliação] %s (%d/5)', $estrelas, $nota),
+            $corpo,
+            array(
+                'Content-Type: text/plain; charset=UTF-8',
+                'Reply-To: ' . get_option('admin_email'),
+            )
+        );
+
+        wp_send_json_success(array(
+            'nota'    => $nota,
+            'enviado' => (bool) $enviado,
+        ));
+    }
+
     public function render_clear_cache_button()
     {
         ?>
@@ -1623,6 +2110,11 @@ class AutoCEP_Admin
             $existentes['general']['enable_shipping']      = !empty($input['general']['enable_shipping']) ? 1 : 0;
             $existentes['general']['auto_focus']           = !empty($input['general']['auto_focus']) ? 1 : 0;
             $existentes['general']['browser_autocomplete'] = !empty($input['general']['browser_autocomplete']) ? 1 : 0;
+            $existentes['general']['address_suggest']      = !empty($input['general']['address_suggest']) ? 1 : 0;
+
+            if (isset($input['general']['address_suggest_provider']) && in_array($input['general']['address_suggest_provider'], array('auto', 'viacep', 'google'), true)) {
+                $existentes['general']['address_suggest_provider'] = $input['general']['address_suggest_provider'];
+            }
 
             if (isset($input['general']['neighborhood_field'])) {
                 $existentes['general']['neighborhood_field'] = sanitize_text_field($input['general']['neighborhood_field']);
@@ -1680,6 +2172,165 @@ class AutoCEP_Admin
 
             if (isset($input['checkout_shipping']['position']) && array_key_exists($input['checkout_shipping']['position'], self::get_checkout_hook_choices())) {
                 $existentes['checkout_shipping']['position'] = sanitize_text_field($input['checkout_shipping']['position']);
+            }
+        }
+
+        if (isset($input['modern_checkout'])) {
+            $mc = $input['modern_checkout'];
+
+            $existentes['modern_checkout']['enabled']      = !empty($mc['enabled']) ? 1 : 0;
+            $existentes['modern_checkout']['compact']      = !empty($mc['compact']) ? 1 : 0;
+            $existentes['modern_checkout']['pix_thankyou'] = !empty($mc['pix_thankyou']) ? 1 : 0;
+            $existentes['modern_checkout']['account_notice'] = !empty($mc['account_notice']) ? 1 : 0;
+
+            $limites = array('form_width' => array(400, 1200), 'summary_width' => array(260, 600), 'field_height' => array(32, 60));
+
+            foreach ($limites as $campo => $faixa) {
+                if (isset($mc[$campo]) && '' !== $mc[$campo]) {
+                    $existentes['modern_checkout'][$campo] = max($faixa[0], min($faixa[1], (int) $mc[$campo]));
+                }
+            }
+
+            if (isset($mc['ship_different']) && in_array($mc['ship_different'], array('unchecked', 'woocommerce'), true)) {
+                $existentes['modern_checkout']['ship_different'] = $mc['ship_different'];
+            }
+
+            if (isset($mc['account_mode']) && in_array($mc['account_mode'], array('woocommerce', 'optional', 'required', 'guest'), true)) {
+                $existentes['modern_checkout']['account_mode'] = $mc['account_mode'];
+            }
+
+            if (isset($mc['account_message'])) {
+                $existentes['modern_checkout']['account_message'] = sanitize_textarea_field($mc['account_message']);
+            }
+
+            foreach (array('step1_title', 'step2_title', 'step3_title', 'next_label') as $campo) {
+                if (isset($mc[$campo]) && '' !== trim($mc[$campo])) {
+                    $existentes['modern_checkout'][$campo] = sanitize_text_field($mc[$campo]);
+                }
+            }
+
+            foreach (array('pix_message', 'card_message', 'boleto_message') as $campo) {
+                if (isset($mc[$campo])) {
+                    $existentes['modern_checkout'][$campo] = sanitize_textarea_field($mc[$campo]);
+                }
+            }
+
+            if (isset($mc['accent_color']) && preg_match('/^#[0-9a-fA-F]{3,6}$/', $mc['accent_color'])) {
+                $existentes['modern_checkout']['accent_color'] = sanitize_text_field($mc['accent_color']);
+            }
+
+            if (isset($mc['simulator']) && in_array($mc['simulator'], array('top', 'hide'), true)) {
+                $existentes['modern_checkout']['simulator'] = $mc['simulator'];
+            }
+
+            if (isset($mc['fields']) && is_array($mc['fields'])) {
+                $campos = array();
+
+                foreach (AutoCEP_Modern_Checkout::get_managed_fields() as $chave => $rotulo) {
+                    if (!isset($mc['fields'][$chave]) || !is_array($mc['fields'][$chave])) {
+                        continue;
+                    }
+
+                    $dados = $mc['fields'][$chave];
+
+                    $campos[$chave] = array(
+                        'show'     => !empty($dados['show']) ? 1 : 0,
+                        'required' => isset($dados['required']) && in_array($dados['required'], array('yes', 'no'), true) ? $dados['required'] : '',
+                        'label'    => isset($dados['label']) ? sanitize_text_field($dados['label']) : '',
+                    );
+                }
+
+                $existentes['modern_checkout']['fields'] = $campos;
+            }
+
+            // Campos extras: a lista inteira é reenviada a cada salvamento
+            // (removidos no painel simplesmente não vêm).
+            if (isset($mc['enabled'])) {
+                $extras = array();
+                $usadas = array();
+                $tipos  = AutoCEP_Modern_Checkout::get_custom_field_types();
+                $lista  = isset($mc['custom_fields']) && is_array($mc['custom_fields']) ? $mc['custom_fields'] : array();
+
+                foreach (array_slice($lista, 0, 20) as $dados) {
+                    $rotulo = isset($dados['label']) ? sanitize_text_field($dados['label']) : '';
+
+                    if ('' === $rotulo) {
+                        continue;
+                    }
+
+                    // A chave nasce do rótulo e nunca muda depois (é ela que
+                    // liga o campo aos valores já salvos nos pedidos).
+                    $chave = isset($dados['key']) ? sanitize_key($dados['key']) : '';
+
+                    if (0 !== strpos($chave, AutoCEP_Modern_Checkout::CUSTOM_PREFIX)) {
+                        $slug  = substr(sanitize_key(str_replace('-', '_', sanitize_title($rotulo))), 0, 30);
+                        $chave = AutoCEP_Modern_Checkout::CUSTOM_PREFIX . ($slug ? $slug : 'campo');
+                    }
+
+                    $original = $chave;
+                    $n        = 2;
+
+                    while (isset($usadas[$chave])) {
+                        $chave = $original . '_' . $n++;
+                    }
+
+                    $usadas[$chave] = true;
+                    $tipo           = isset($dados['type']) && isset($tipos[$dados['type']]) ? $dados['type'] : 'text';
+
+                    $novo = array(
+                        'key'      => $chave,
+                        'label'    => $rotulo,
+                        'type'     => $tipo,
+                        'step'     => isset($dados['step']) && 1 === (int) $dados['step'] ? 1 : 2,
+                        'required' => !empty($dados['required']) ? 1 : 0,
+                        'options'  => 'select' === $tipo && isset($dados['options']) ? sanitize_text_field($dados['options']) : '',
+                    );
+
+                    // Verificação antes de adicionar: só grava o que o checkout
+                    // do WooCommerce vai aceitar. O que não passa fica de fora e
+                    // o motivo aparece como aviso no topo da página.
+                    $motivo = AutoCEP_Modern_Checkout::validate_custom_field($novo, self::get_checkout_fields_snapshot());
+
+                    if ('' !== $motivo) {
+                        if (function_exists('add_settings_error')) {
+                            add_settings_error(
+                                AUTOCEP_OPTION_KEY,
+                                'autocep_campo_extra_' . $chave,
+                                sprintf(__('O campo extra "%1$s" não foi adicionado: %2$s', 'autocep'), $rotulo, $motivo),
+                                'error'
+                            );
+                        }
+
+                        continue;
+                    }
+
+                    $extras[] = $novo;
+                }
+
+                $existentes['modern_checkout']['custom_fields'] = $extras;
+            }
+        }
+
+        if (isset($input['order_status'])) {
+            $os = $input['order_status'];
+
+            $existentes['order_status']['enabled']      = !empty($os['enabled']) ? 1 : 0;
+            $existentes['order_status']['paid_on_load'] = !empty($os['paid_on_load']) ? 1 : 0;
+
+            if (isset($os['redirect_url'])) {
+                // Só endereços http(s); {pedido} é trocado pelo número do pedido.
+                $url = trim($os['redirect_url']);
+                $existentes['order_status']['redirect_url'] = '' === $url ? '' : esc_url_raw($url, array('http', 'https'));
+            }
+
+            if (isset($os['redirect_delay'])) {
+                $existentes['order_status']['redirect_delay'] = max(0, min(30, (int) $os['redirect_delay']));
+            }
+
+            foreach (array_keys(AutoCEP_Order_Status::get_statuses()) as $status) {
+                if (isset($os['msg_' . $status])) {
+                    $existentes['order_status']['msg_' . $status] = sanitize_textarea_field($os['msg_' . $status]);
+                }
             }
         }
 
@@ -2787,11 +3438,17 @@ class AutoCEP_Admin
             ? sanitize_key($_GET['tab'])
             : 'general';
 
+        // A antiga aba "Checkout Moderno" agora faz parte da aba Checkout.
+        if ('modern_checkout' === $tab_atual) {
+            $tab_atual = 'checkout_shipping';
+        }
+
         $abas = array(
             'general'            => array('label' => __('Frete e Busca de CEP', 'autocep'), 'icon' => 'dashicons dashicons-location-alt'),
             'product_shipping'   => array('label' => __('Página de Produto', 'autocep'), 'icon' => 'dashicons dashicons-archive'),
             'cart_shipping'      => array('label' => __('Carrinho', 'autocep'), 'icon' => 'dashicons dashicons-cart'),
             'checkout_shipping'  => array('label' => __('Checkout', 'autocep'), 'icon' => 'dashicons dashicons-money-alt'),
+            'post_purchase'      => array('label' => __('Pós-Compra', 'autocep'), 'icon' => 'dashicons dashicons-yes-alt'),
             'growth'             => array('label' => __('Growth Marketing', 'autocep'), 'icon' => 'dashicons dashicons-chart-line'),
             'distance_shipping'  => array('label' => __('Retirada em Loja', 'autocep'), 'icon' => 'dashicons dashicons-store'),
             'integrations'       => array('label' => __('Integrações de Frete', 'autocep'), 'icon' => 'dashicons dashicons-rest-api'),
@@ -2799,6 +3456,7 @@ class AutoCEP_Admin
             'appearance'         => array('label' => __('Aparência', 'autocep'), 'icon' => 'dashicons dashicons-admin-appearance'),
             'shipping_dashboard' => array('label' => __('Analytics', 'autocep'), 'icon' => 'dashicons dashicons-chart-bar'),
             'support'            => array('label' => __('Suporte Técnico', 'autocep'), 'icon' => 'autocep-icon-headset'),
+            'feedback'           => array('label' => __('Avalie o Plugin', 'autocep'), 'icon' => 'dashicons dashicons-star-filled'),
             'diagnostics'        => array('label' => __('Diagnóstico e Logs', 'autocep'), 'icon' => 'dashicons dashicons-admin-tools'),
         );
 
@@ -2811,8 +3469,11 @@ class AutoCEP_Admin
                     <a href="https://tesw.com.br/documentacao-autocep" target="_blank" rel="noopener noreferrer">
                         <span class="dashicons dashicons-media-document"></span> <?php esc_html_e('Documentação', 'autocep'); ?>
                     </a>
-                    <a href="https://youtu.be/YnDT_qNIH1w" target="_blank" rel="noopener noreferrer">
+                    <a href="https://youtu.be/EkEC8CJ_H5c" target="_blank" rel="noopener noreferrer">
                         <span class="dashicons dashicons-video-alt3"></span> <?php esc_html_e('Vídeo de Demonstração', 'autocep'); ?>
+                    </a>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=autocep&tab=feedback')); ?>">
+                        <span class="dashicons dashicons-star-filled"></span> <?php esc_html_e('Avalie o Plugin', 'autocep'); ?>
                     </a>
                 </div>
             </div>
@@ -2820,11 +3481,11 @@ class AutoCEP_Admin
             <?php
             $grupos = array(
                 'geral'       => array('general'),
-                'frete'       => array('product_shipping', 'cart_shipping', 'checkout_shipping'),
+                'frete'       => array('product_shipping', 'cart_shipping', 'checkout_shipping', 'post_purchase'),
                 'marketing'   => array('growth'),
                 'logistica'   => array('distance_shipping', 'integrations'),
                 'ux'          => array('messages', 'appearance'),
-                'analytics'   => array('shipping_dashboard', 'support', 'diagnostics'),
+                'analytics'   => array('shipping_dashboard', 'support', 'feedback', 'diagnostics'),
             );
             ?>
             <div class="nav-tab-wrapper autocep-nav-tabs">
@@ -2861,6 +3522,8 @@ class AutoCEP_Admin
                 <?php $this->render_shipping_dashboard_tab(); ?>
             <?php elseif ('support' === $tab_atual) : ?>
                 <?php $this->render_support_tab(); ?>
+            <?php elseif ('feedback' === $tab_atual) : ?>
+                <?php $this->render_feedback_tab(); ?>
             <?php else : ?>
                 <form action="options.php" method="post">
                     <?php
@@ -3036,6 +3699,259 @@ class AutoCEP_Admin
         <?php
     }
 
+    /**
+     * Rótulo legível de um campo do checkout (para a lista de erros).
+     */
+    private static function checkout_field_label($id)
+    {
+        $nomes = array(
+            'billing_email'      => __('E-mail', 'autocep'),
+            'billing_first_name' => __('Nome', 'autocep'),
+            'billing_last_name'  => __('Sobrenome', 'autocep'),
+            'billing_phone'      => __('Telefone', 'autocep'),
+            'billing_cellphone'  => __('Celular', 'autocep'),
+            'billing_cpf'        => __('CPF', 'autocep'),
+            'billing_cnpj'       => __('CNPJ', 'autocep'),
+            'billing_persontype' => __('Tipo de pessoa', 'autocep'),
+            'billing_company'    => __('Empresa', 'autocep'),
+            'billing_postcode'   => __('CEP', 'autocep'),
+            'billing_address_1'  => __('Endereço', 'autocep'),
+            'billing_number'     => __('Número', 'autocep'),
+            'billing_address_2'  => __('Complemento', 'autocep'),
+            'billing_neighborhood' => __('Bairro', 'autocep'),
+            'billing_city'       => __('Cidade', 'autocep'),
+            'billing_state'      => __('Estado', 'autocep'),
+            'billing_country'    => __('País', 'autocep'),
+            'shipping_method'    => __('Forma de entrega (não escolhida)', 'autocep'),
+            'terms'              => __('Aceite dos termos', 'autocep'),
+            'payment_method'     => __('Forma de pagamento', 'autocep'),
+        );
+
+        foreach (AutoCEP_Modern_Checkout::get_custom_fields() as $campo) {
+            $nomes[$campo['key']] = $campo['label'];
+        }
+
+        if (isset($nomes[$id])) {
+            return $nomes[$id];
+        }
+
+        // Endereço de entrega diferente: "shipping_city" → "Cidade (entrega)".
+        $cobranca = preg_replace('/^shipping_/', 'billing_', $id);
+
+        if ($cobranca !== $id && isset($nomes[$cobranca])) {
+            return sprintf(__('%s (entrega)', 'autocep'), $nomes[$cobranca]);
+        }
+
+        return $id;
+    }
+
+    /**
+     * Seção "Funil do Checkout" da aba Analytics.
+     */
+    private function render_checkout_funnel($dias)
+    {
+        if (!class_exists('AutoCEP_Checkout_Analytics')) {
+            return;
+        }
+
+        $funil    = AutoCEP_Checkout_Analytics::get_funnel($dias);
+        $receita  = AutoCEP_Checkout_Analytics::get_revenue($dias);
+        $tempo    = AutoCEP_Checkout_Analytics::get_average_time($dias);
+        $pagtos   = AutoCEP_Checkout_Analytics::get_by_payment($dias);
+        $aparelho = AutoCEP_Checkout_Analytics::get_by_device($dias);
+        $erros    = AutoCEP_Checkout_Analytics::get_top_errors($dias);
+        $options  = self::get_options();
+        $ativo    = !empty($options['modern_checkout']['enabled']);
+
+        $pct = function ($parte, $todo) {
+            return $todo > 0 ? round($parte / $todo * 100, 1) : null;
+        };
+
+        $formatar_pct = function ($valor) {
+            return null === $valor ? '—' : number_format_i18n($valor, 1) . '%';
+        };
+
+        $entradas  = $funil['view'];
+        $conversao = $pct($funil['order'], $entradas);
+
+        $etapas = array(
+            'view'   => __('Entraram no checkout', 'autocep'),
+            'step2'  => __('Chegaram à Entrega', 'autocep'),
+            'step3'  => __('Chegaram ao Pagamento', 'autocep'),
+            'submit' => __('Clicaram em Finalizar', 'autocep'),
+            'order'  => __('Concluíram o pedido', 'autocep'),
+        );
+
+        $tipos_pagto = array(
+            'pix'    => __('Pix', 'autocep'),
+            'card'   => __('Cartão', 'autocep'),
+            'boleto' => __('Boleto', 'autocep'),
+            'other'  => __('Outros', 'autocep'),
+        );
+        ?>
+        <div class="autocep-funnel">
+            <h3 class="autocep-funnel-section-title"><span class="dashicons dashicons-filter"></span> <?php esc_html_e('Funil do Checkout', 'autocep'); ?></h3>
+
+            <?php if (!$ativo && 0 === $entradas) : ?>
+                <div class="autocep-funnel-empty">
+                    <?php
+                    printf(
+                        wp_kses(__('O funil mede o <strong>Checkout Moderno</strong>. <a href="%s">Ative-o na aba Checkout</a> para começar a ver a taxa de conversão e onde os clientes desistem.', 'autocep'), array('strong' => array(), 'a' => array('href' => array()))),
+                        esc_url(admin_url('admin.php?page=autocep&tab=checkout_shipping'))
+                    );
+                    ?>
+                </div>
+            <?php elseif (0 === $entradas) : ?>
+                <div class="autocep-funnel-empty"><?php esc_html_e('Ainda não há visitas ao checkout neste período. Os dados aparecem assim que clientes abrirem a página de finalizar compra.', 'autocep'); ?></div>
+            <?php else : ?>
+
+                <div class="autocep-kpi-grid">
+                    <div class="autocep-kpi-card">
+                        <div class="autocep-kpi-icon autocep-kpi-teal"><span class="dashicons dashicons-yes-alt"></span></div>
+                        <div class="autocep-kpi-info">
+                            <span class="autocep-kpi-label"><?php esc_html_e('Taxa de Conversão do Checkout', 'autocep'); ?></span>
+                            <span class="autocep-kpi-value"><?php echo esc_html($formatar_pct($conversao)); ?></span>
+                            <span class="autocep-kpi-sub"><?php echo esc_html(sprintf(__('%1$d pedidos de %2$d visitas', 'autocep'), $funil['order'], $entradas)); ?></span>
+                        </div>
+                    </div>
+                    <div class="autocep-kpi-card">
+                        <div class="autocep-kpi-icon autocep-kpi-orange"><span class="dashicons dashicons-dismiss"></span></div>
+                        <div class="autocep-kpi-info">
+                            <span class="autocep-kpi-label"><?php esc_html_e('Desistência no Checkout', 'autocep'); ?></span>
+                            <span class="autocep-kpi-value"><?php echo esc_html(null === $conversao ? '—' : $formatar_pct(round(100 - $conversao, 1))); ?></span>
+                            <span class="autocep-kpi-sub"><?php echo esc_html(sprintf(__('%d clientes saíram sem comprar', 'autocep'), max(0, $entradas - $funil['order']))); ?></span>
+                        </div>
+                    </div>
+                    <div class="autocep-kpi-card">
+                        <div class="autocep-kpi-icon autocep-kpi-green"><span class="dashicons dashicons-money-alt"></span></div>
+                        <div class="autocep-kpi-info">
+                            <span class="autocep-kpi-label"><?php esc_html_e('Receita pelo Checkout', 'autocep'); ?></span>
+                            <span class="autocep-kpi-value"><?php echo wp_kses_post(wc_price($receita['receita'])); ?></span>
+                            <span class="autocep-kpi-sub"><?php echo null === $receita['ticket'] ? esc_html__('Sem pedidos no período', 'autocep') : wp_kses_post(sprintf(__('Ticket médio %s', 'autocep'), wc_price($receita['ticket']))); ?></span>
+                        </div>
+                    </div>
+                    <div class="autocep-kpi-card">
+                        <div class="autocep-kpi-icon autocep-kpi-blue"><span class="dashicons dashicons-clock"></span></div>
+                        <div class="autocep-kpi-info">
+                            <span class="autocep-kpi-label"><?php esc_html_e('Tempo Médio até o Pedido', 'autocep'); ?></span>
+                            <span class="autocep-kpi-value"><?php echo null === $tempo ? '—' : esc_html($tempo < 60 ? sprintf(__('%d s', 'autocep'), $tempo) : sprintf(__('%1$d min %2$02d s', 'autocep'), floor($tempo / 60), $tempo % 60)); ?></span>
+                            <span class="autocep-kpi-sub"><?php esc_html_e('da entrada no checkout ao pedido', 'autocep'); ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="autocep-funnel-grid">
+                    <div class="autocep-chart-card">
+                        <h3><span class="dashicons dashicons-filter"></span> <?php esc_html_e('Onde os clientes desistem', 'autocep'); ?></h3>
+                        <div class="autocep-funnel-steps">
+                            <?php
+                            $anterior = null;
+
+                            foreach ($etapas as $chave => $rotulo) :
+                                $total   = $funil[$chave];
+                                $largura = $entradas ? max(2, round($total / $entradas * 100)) : 0;
+                                $perda   = null !== $anterior ? max(0, $anterior - $total) : 0;
+                                ?>
+                                <div class="autocep-funnel-step">
+                                    <div class="autocep-funnel-step-head">
+                                        <span class="autocep-funnel-step-label"><?php echo esc_html($rotulo); ?></span>
+                                        <span class="autocep-funnel-step-value"><strong><?php echo esc_html(number_format_i18n($total)); ?></strong> · <?php echo esc_html($formatar_pct($pct($total, $entradas))); ?></span>
+                                    </div>
+                                    <div class="autocep-funnel-bar"><span style="width: <?php echo esc_attr($largura); ?>%;"></span></div>
+                                    <?php if (null !== $anterior && $perda > 0) : ?>
+                                        <span class="autocep-funnel-drop"><?php echo esc_html(sprintf(__('▼ %1$d desistiram nesta etapa (%2$s)', 'autocep'), $perda, $formatar_pct($pct($perda, $anterior)))); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <?php
+                                $anterior = $total;
+                            endforeach;
+                            ?>
+                        </div>
+                    </div>
+
+                    <div class="autocep-funnel-side">
+                        <div class="autocep-chart-card">
+                            <h3><span class="dashicons dashicons-money-alt"></span> <?php esc_html_e('Conversão por Forma de Pagamento', 'autocep'); ?></h3>
+                            <?php if (empty($pagtos)) : ?>
+                                <p class="autocep-funnel-muted"><?php esc_html_e('Nenhum clique em Finalizar ainda.', 'autocep'); ?></p>
+                            <?php else : ?>
+                                <table class="autocep-funnel-table">
+                                    <thead><tr><th><?php esc_html_e('Pagamento', 'autocep'); ?></th><th><?php esc_html_e('Finalizar', 'autocep'); ?></th><th><?php esc_html_e('Pedidos', 'autocep'); ?></th><th><?php esc_html_e('Conversão', 'autocep'); ?></th></tr></thead>
+                                    <tbody>
+                                        <?php foreach ($pagtos as $tipo => $dados) : ?>
+                                            <tr>
+                                                <td><?php echo esc_html(isset($tipos_pagto[$tipo]) ? $tipos_pagto[$tipo] : $tipo); ?></td>
+                                                <td><?php echo esc_html(number_format_i18n($dados['submit'])); ?></td>
+                                                <td><?php echo esc_html(number_format_i18n($dados['order'])); ?></td>
+                                                <td><strong><?php echo esc_html($formatar_pct($pct($dados['order'], $dados['submit']))); ?></strong></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                                <p class="autocep-funnel-muted"><?php esc_html_e('Quem clicou em Finalizar com cada forma e quantos pedidos foram criados. Conversão baixa costuma indicar pagamento recusado ou erro no gateway.', 'autocep'); ?></p>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="autocep-chart-card">
+                            <h3><span class="dashicons dashicons-smartphone"></span> <?php esc_html_e('Celular x Computador', 'autocep'); ?></h3>
+                            <table class="autocep-funnel-table">
+                                <thead><tr><th><?php esc_html_e('Aparelho', 'autocep'); ?></th><th><?php esc_html_e('Visitas', 'autocep'); ?></th><th><?php esc_html_e('Pedidos', 'autocep'); ?></th><th><?php esc_html_e('Conversão', 'autocep'); ?></th></tr></thead>
+                                <tbody>
+                                    <?php foreach (array('mobile' => __('Celular', 'autocep'), 'desktop' => __('Computador', 'autocep')) as $chave => $rotulo) : ?>
+                                        <tr>
+                                            <td><?php echo esc_html($rotulo); ?></td>
+                                            <td><?php echo esc_html(number_format_i18n($aparelho[$chave]['view'])); ?></td>
+                                            <td><?php echo esc_html(number_format_i18n($aparelho[$chave]['order'])); ?></td>
+                                            <td><strong><?php echo esc_html($formatar_pct($pct($aparelho[$chave]['order'], $aparelho[$chave]['view']))); ?></strong></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="autocep-chart-card">
+                            <h3><span class="dashicons dashicons-warning"></span> <?php esc_html_e('Campos com Mais Erros', 'autocep'); ?></h3>
+                            <?php if (empty($erros)) : ?>
+                                <p class="autocep-funnel-muted"><?php esc_html_e('Nenhum erro de preenchimento no período. 🎉', 'autocep'); ?></p>
+                            <?php else : ?>
+                                <table class="autocep-funnel-table">
+                                    <thead><tr><th><?php esc_html_e('Campo', 'autocep'); ?></th><th><?php esc_html_e('Clientes', 'autocep'); ?></th></tr></thead>
+                                    <tbody>
+                                        <?php foreach ($erros as $erro) : ?>
+                                            <tr><td><?php echo esc_html(self::checkout_field_label($erro->campo)); ?></td><td><?php echo esc_html(number_format_i18n((int) $erro->total)); ?></td></tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                                <p class="autocep-funnel-muted"><?php esc_html_e('Clientes que tentaram avançar com o campo vazio ou inválido. Campos no topo da lista são candidatos a ficar opcionais ou com instrução mais clara (aba Checkout > Campos do Checkout).', 'autocep'); ?></p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+        <style>
+            .autocep-funnel-section-title { display: flex; align-items: center; gap: 6px; margin: 24px 0 12px; font-size: 15px; color: #1e293b; }
+            .autocep-funnel-section-title .dashicons { color: #3b82f6; }
+            .autocep-funnel-empty { padding: 18px 20px; border: 1px dashed #93c5fd; border-radius: 10px; background: #eff6ff; color: #1e3a8a; }
+            .autocep-funnel-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+            .autocep-funnel-side { display: flex; flex-direction: column; gap: 16px; }
+            .autocep-funnel-steps { display: flex; flex-direction: column; gap: 14px; }
+            .autocep-funnel-step-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 13px; }
+            .autocep-funnel-step-label { color: #334155; font-weight: 600; }
+            .autocep-funnel-step-value { color: #475569; white-space: nowrap; }
+            .autocep-funnel-bar { height: 14px; border-radius: 7px; background: #f1f5f9; overflow: hidden; }
+            .autocep-funnel-bar span { display: block; height: 100%; border-radius: 7px; background: linear-gradient(90deg, #1d4ed8, #3b82f6); }
+            .autocep-funnel-drop { display: block; margin-top: 4px; font-size: 12px; color: #c2410c; }
+            .autocep-funnel-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            .autocep-funnel-table th { padding: 6px 4px; border-bottom: 1px solid #e2e8f0; color: #64748b; font-weight: 600; text-align: left; }
+            .autocep-funnel-table td { padding: 7px 4px; border-bottom: 1px solid #f1f5f9; }
+            .autocep-funnel-table th:not(:first-child), .autocep-funnel-table td:not(:first-child) { text-align: right; }
+            .autocep-funnel-muted { margin: 8px 0 0; font-size: 12px; color: #64748b; }
+            @media (max-width: 960px) { .autocep-funnel-grid { grid-template-columns: minmax(0, 1fr); } }
+        </style>
+        <?php
+    }
+
     private function render_shipping_dashboard_tab()
     {
         if (!class_exists('AutoCEP_Stats')) {
@@ -3098,6 +4014,10 @@ class AutoCEP_Admin
                     <span id="autocep-clear-stats-feedback"></span>
                 </div>
             </div>
+
+            <?php $this->render_checkout_funnel($dias); ?>
+
+            <h3 class="autocep-funnel-section-title"><span class="dashicons dashicons-location-alt"></span> <?php esc_html_e('Frete e CEP', 'autocep'); ?></h3>
 
             <!-- KPI Cards -->
             <div class="autocep-kpi-grid">
@@ -3464,7 +4384,7 @@ class AutoCEP_Admin
                         <span class="dashicons dashicons-media-document"></span>
                         <?php esc_html_e('Documentação Oficial', 'autocep'); ?>
                     </a>
-                    <a href="https://youtu.be/YnDT_qNIH1w" target="_blank" rel="noopener noreferrer" class="autocep-contact-btn autocep-contact-resource">
+                    <a href="https://youtu.be/EkEC8CJ_H5c" target="_blank" rel="noopener noreferrer" class="autocep-contact-btn autocep-contact-resource">
                         <span class="dashicons dashicons-video-alt3"></span>
                         <?php esc_html_e('Vídeo de Demonstração', 'autocep'); ?>
                     </a>
@@ -3797,6 +4717,213 @@ class AutoCEP_Admin
                     var fakeEvt = { target: { files: dt.files } };
                     $('#autocep-ticket-arquivo').prop('files', dt.files).trigger('change');
                 }
+            });
+        });
+        </script>
+        <?php
+    }
+
+    private function render_feedback_tab()
+    {
+        $nonce     = wp_create_nonce(AUTOCEP_ADMIN_NONCE_ACTION);
+        $historico = class_exists('AutoCEP_Feedback') ? AutoCEP_Feedback::get_feedback(10) : array();
+        $rotulos   = array(
+            1 => __('Muito ruim', 'autocep'),
+            2 => __('Ruim', 'autocep'),
+            3 => __('Regular', 'autocep'),
+            4 => __('Bom', 'autocep'),
+            5 => __('Excelente!', 'autocep'),
+        );
+        ?>
+        <style>
+            .autocep-feedback-hero { background: linear-gradient(135deg, #1d4ed8, #3b82f6); color: #fff; border-radius: 12px; padding: 22px 26px; margin: 18px 0; }
+            .autocep-feedback-hero h2 { color: #fff; margin: 0 0 6px; font-size: 20px; }
+            .autocep-feedback-hero p { margin: 0; font-size: 14px; opacity: .95; max-width: 760px; line-height: 1.55; }
+            .autocep-feedback-badge { display: inline-block; background: #fbbf24; color: #1f2937; font-weight: 800; font-size: 11px; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; margin-bottom: 10px; }
+            .autocep-stars { display: inline-flex; gap: 4px; }
+            .autocep-star { background: none; border: 0; padding: 0; cursor: pointer; font-size: 36px; line-height: 1; color: #d1d5db; transition: transform .1s, color .1s; }
+            .autocep-star:hover { transform: scale(1.12); }
+            .autocep-star.is-on { color: #f59e0b; }
+            .autocep-star:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 4px; }
+            .autocep-star-label { margin-left: 10px; font-weight: 600; color: #374151; vertical-align: 8px; }
+            .autocep-review-cta { display: none; margin-top: 14px; padding: 14px 16px; border-radius: 8px; background: #fffbeb; border: 1px solid #fcd34d; }
+            .autocep-review-cta a.button-primary { margin-top: 8px; }
+            .autocep-feedback-item { border-bottom: 1px solid #f3f4f6; padding: 10px 0; font-size: 13px; }
+            .autocep-feedback-item:last-child { border-bottom: 0; }
+            .autocep-feedback-item-stars { color: #f59e0b; letter-spacing: 2px; }
+            .autocep-feedback-item-date { color: #9ca3af; font-size: 11px; margin-left: 6px; }
+            .autocep-feedback-item p { margin: 4px 0 0; color: #4b5563; white-space: pre-line; }
+            .autocep-video-embed { position: relative; padding-top: 56.25%; border-radius: 8px; overflow: hidden; background: #000; }
+            .autocep-video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+        </style>
+
+        <div class="autocep-support-wrap">
+            <div class="autocep-feedback-hero">
+                <span class="autocep-feedback-badge"><?php esc_html_e('100% GRATUITO', 'autocep'); ?></span>
+                <h2><?php esc_html_e('O AutoCEP é gratuito — e sua avaliação é o que mantém ele vivo', 'autocep'); ?></h2>
+                <p><?php esc_html_e('Não existe versão paga, nem recurso bloqueado. Leva menos de 1 minuto: dê sua nota, conte o que achou e diga o que podemos melhorar. Cada sugestão é lida pela equipe TESW e ajuda a decidir as próximas funcionalidades.', 'autocep'); ?></p>
+            </div>
+
+            <div class="autocep-support-grid">
+                <div class="autocep-support-card">
+                    <div class="autocep-support-card-header">
+                        <span class="dashicons dashicons-star-filled"></span>
+                        <h3><?php esc_html_e('Sua Avaliação', 'autocep'); ?></h3>
+                    </div>
+                    <div class="autocep-support-card-body">
+                        <div class="autocep-field-group">
+                            <label><?php esc_html_e('Qual nota você dá ao AutoCEP?', 'autocep'); ?></label>
+                            <div>
+                                <div class="autocep-stars" id="autocep-stars" role="radiogroup" aria-label="<?php esc_attr_e('Nota de 1 a 5 estrelas', 'autocep'); ?>">
+                                    <?php for ($i = 1; $i <= 5; $i++) : ?>
+                                        <button type="button" class="autocep-star" data-nota="<?php echo esc_attr($i); ?>" role="radio" aria-checked="false"
+                                            aria-label="<?php echo esc_attr(sprintf(_n('%d estrela', '%d estrelas', $i, 'autocep'), $i)); ?>">★</button>
+                                    <?php endfor; ?>
+                                </div>
+                                <span class="autocep-star-label" id="autocep-star-label"></span>
+                            </div>
+                        </div>
+                        <div class="autocep-field-group">
+                            <label for="autocep-feedback-comentario"><?php esc_html_e('Comentário', 'autocep'); ?></label>
+                            <textarea id="autocep-feedback-comentario" rows="4" placeholder="<?php esc_attr_e('O que você mais gostou? Algo te incomodou?', 'autocep'); ?>"></textarea>
+                        </div>
+                        <div class="autocep-field-group">
+                            <label for="autocep-feedback-sugestao"><?php esc_html_e('Sugestões de melhoria (opcional)', 'autocep'); ?></label>
+                            <textarea id="autocep-feedback-sugestao" rows="4" placeholder="<?php esc_attr_e('Qual funcionalidade você gostaria de ver no AutoCEP?', 'autocep'); ?>"></textarea>
+                        </div>
+                        <p style="font-size:11px;color:#6b7280;margin:0 0 12px;">
+                            <?php esc_html_e('Ao enviar, sua avaliação é salva neste site e enviada por e-mail para a equipe TESW, junto com a URL do site e as versões do WordPress, WooCommerce, PHP e AutoCEP.', 'autocep'); ?>
+                        </p>
+                        <div id="autocep-feedback-msg" class="autocep-ticket-feedback" style="display:none;"></div>
+                        <button type="button" class="autocep-btn-primary" id="autocep-feedback-submit">
+                            <span class="dashicons dashicons-yes"></span>
+                            <?php esc_html_e('Enviar Avaliação', 'autocep'); ?>
+                        </button>
+
+                        <div class="autocep-review-cta" id="autocep-review-cta">
+                            <strong><?php esc_html_e('Que bom que você gostou! 💙', 'autocep'); ?></strong><br />
+                            <?php esc_html_e('Pode repetir essa nota no WordPress.org? Avaliações públicas ajudam outros lojistas a encontrar o AutoCEP — e é o que mais nos motiva a continuar oferecendo tudo de graça.', 'autocep'); ?><br />
+                            <a href="<?php echo esc_url(self::REVIEW_URL); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary">
+                                ⭐ <?php esc_html_e('Avaliar no WordPress.org', 'autocep'); ?>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:16px;">
+                    <div class="autocep-support-card">
+                        <div class="autocep-support-card-header">
+                            <span class="dashicons dashicons-video-alt3"></span>
+                            <h3><?php esc_html_e('Vídeo de Apresentação', 'autocep'); ?></h3>
+                        </div>
+                        <div class="autocep-support-card-body">
+                            <div class="autocep-video-embed">
+                                <iframe src="https://www.youtube-nocookie.com/embed/EkEC8CJ_H5c" title="<?php esc_attr_e('Vídeo de apresentação do AutoCEP', 'autocep'); ?>" loading="lazy"
+                                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="autocep-support-card">
+                        <div class="autocep-support-card-header">
+                            <span class="dashicons dashicons-list-view"></span>
+                            <h3><?php esc_html_e('Avaliações Enviadas deste Site', 'autocep'); ?></h3>
+                        </div>
+                        <div class="autocep-support-card-body" id="autocep-feedback-history">
+                            <?php if (empty($historico)) : ?>
+                                <p class="autocep-feedback-empty" style="color:#6b7280;font-size:13px;margin:0;"><?php esc_html_e('Nenhuma avaliação enviada ainda.', 'autocep'); ?></p>
+                            <?php else : ?>
+                                <?php foreach ($historico as $item) : ?>
+                                    <div class="autocep-feedback-item">
+                                        <span class="autocep-feedback-item-stars"><?php echo esc_html(str_repeat('★', (int) $item->nota) . str_repeat('☆', 5 - (int) $item->nota)); ?></span>
+                                        <span class="autocep-feedback-item-date"><?php echo esc_html(mysql2date(get_option('date_format'), $item->criado_em)); ?></span>
+                                        <?php if ($item->comentario) : ?>
+                                            <p><?php echo esc_html($item->comentario); ?></p>
+                                        <?php endif; ?>
+                                        <?php if ($item->sugestao) : ?>
+                                            <p><strong><?php esc_html_e('Sugestão:', 'autocep'); ?></strong> <?php echo esc_html($item->sugestao); ?></p>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        jQuery(function($){
+            var rotulos = <?php echo wp_json_encode($rotulos, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+            var notaAtual = 0;
+            var $estrelas = $('#autocep-stars .autocep-star');
+
+            function pintar(nota) {
+                $estrelas.each(function(){
+                    var n = parseInt($(this).data('nota'), 10);
+                    $(this).toggleClass('is-on', n <= nota).attr('aria-checked', n === notaAtual ? 'true' : 'false');
+                });
+                $('#autocep-star-label').text(nota ? rotulos[nota] : '');
+            }
+
+            $estrelas.on('mouseenter focus', function(){
+                pintar(parseInt($(this).data('nota'), 10));
+            }).on('click', function(){
+                notaAtual = parseInt($(this).data('nota'), 10);
+                pintar(notaAtual);
+            });
+            $('#autocep-stars').on('mouseleave', function(){ pintar(notaAtual); });
+
+            $('#autocep-feedback-submit').on('click', function(){
+                var $btn = $(this);
+                var $msg = $('#autocep-feedback-msg');
+                var comentario = $('#autocep-feedback-comentario').val().trim();
+                var sugestao   = $('#autocep-feedback-sugestao').val().trim();
+
+                if (!notaAtual) {
+                    $msg.removeClass('autocep-fb-ok').addClass('autocep-fb-erro')
+                        .text('<?php echo esc_js(__('Escolha uma nota de 1 a 5 estrelas.', 'autocep')); ?>').show();
+                    return;
+                }
+
+                $btn.prop('disabled', true).text('<?php echo esc_js(__('Enviando...', 'autocep')); ?>');
+
+                $.post(ajaxurl, {
+                    action: 'autocep_send_feedback',
+                    nonce: '<?php echo esc_js($nonce); ?>',
+                    nota: notaAtual,
+                    comentario: comentario,
+                    sugestao: sugestao
+                }).done(function(r){
+                    if (!r || !r.success) {
+                        $msg.removeClass('autocep-fb-ok').addClass('autocep-fb-erro')
+                            .text((r && r.data && r.data.message) || '<?php echo esc_js(__('Não foi possível enviar sua avaliação.', 'autocep')); ?>').show();
+                        return;
+                    }
+
+                    $msg.removeClass('autocep-fb-erro').addClass('autocep-fb-ok')
+                        .text('<?php echo esc_js(__('✅ Obrigado! Sua avaliação foi recebida pela equipe TESW.', 'autocep')); ?>').show();
+
+                    var estrelasTxt = new Array(r.data.nota + 1).join('★') + new Array(6 - r.data.nota).join('☆');
+                    var $item = $('<div class="autocep-feedback-item" />')
+                        .append($('<span class="autocep-feedback-item-stars" />').text(estrelasTxt))
+                        .append($('<span class="autocep-feedback-item-date" />').text('<?php echo esc_js(__('agora', 'autocep')); ?>'));
+                    if (comentario) { $item.append($('<p />').text(comentario)); }
+                    if (sugestao) { $item.append($('<p />').text('<?php echo esc_js(__('Sugestão:', 'autocep')); ?> ' + sugestao)); }
+                    $('#autocep-feedback-history .autocep-feedback-empty').remove();
+                    $('#autocep-feedback-history').prepend($item);
+
+                    $('#autocep-feedback-comentario, #autocep-feedback-sugestao').val('');
+
+                    if (r.data.nota >= 4) {
+                        $('#autocep-review-cta').slideDown(150);
+                    }
+                }).fail(function(){
+                    $msg.removeClass('autocep-fb-ok').addClass('autocep-fb-erro')
+                        .text('<?php echo esc_js(__('Erro de conexão. Tente novamente.', 'autocep')); ?>').show();
+                }).always(function(){
+                    $btn.prop('disabled', false).html('<span class="dashicons dashicons-yes"></span> <?php echo esc_js(__('Enviar Avaliação', 'autocep')); ?>');
+                });
             });
         });
         </script>

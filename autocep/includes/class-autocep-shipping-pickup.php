@@ -19,15 +19,17 @@ class AutoCEP_Shipping_Store_Pickup extends WC_Shipping_Method
 
     public function init()
     {
+        // O WooCommerce monta a janela de configuração a partir desta propriedade.
+        $this->instance_form_fields = $this->get_fields_definition();
         $this->init_instance_settings();
 
-        $this->title   = $this->get_option('title');
+        $this->title   = $this->get_option('title') ?: $this->method_title;
         $this->enabled = $this->get_option('enabled');
 
         add_action('woocommerce_update_options_shipping_' . $this->id, array($this, 'process_admin_options'));
     }
 
-    public function instance_form_fields()
+    private function get_fields_definition()
     {
         return array(
             'enabled' => array(

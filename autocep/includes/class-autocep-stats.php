@@ -63,7 +63,7 @@ class AutoCEP_Stats
         return !empty($options['general']['stats_enabled']);
     }
 
-    private static function get_session_token()
+    public static function get_session_token()
     {
         if (function_exists('WC') && WC()->session && method_exists(WC()->session, 'get_customer_id')) {
             $customer_id = WC()->session->get_customer_id();
@@ -209,6 +209,30 @@ class AutoCEP_Stats
         global $wpdb;
 
         $inicio = self::period_start($dias);
+
+        $hpos_ativo = class_exists('\Automattic\WooCommerce\Utilities\OrderUtil')
+            && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
+
+        if ($hpos_ativo) {
+            $resultados = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT oi.order_item_name AS metodo, COUNT(DISTINCT o.id) AS total
+                     FROM {$wpdb->prefix}wc_orders o
+                     INNER JOIN {$wpdb->prefix}woocommerce_order_items oi
+                         ON oi.order_id = o.id AND oi.order_item_type = 'shipping'
+                     WHERE o.type = 'shop_order'
+                       AND o.status IN ('wc-completed','wc-processing','wc-on-hold','wc-pending')
+                       AND o.date_created_gmt >= %s
+                     GROUP BY oi.order_item_name
+                     ORDER BY total DESC
+                     LIMIT %d",
+                    $inicio,
+                    $limite
+                )
+            );
+
+            return $resultados ?: array();
+        }
 
         $resultados = $wpdb->get_results(
             $wpdb->prepare(

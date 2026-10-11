@@ -120,6 +120,12 @@ jQuery(function ($) {
 
         ['billing', 'shipping'].forEach(function (secao) {
             Object.keys(mapaCampos).forEach(function (campo) {
+                // Com as sugestões de endereço do AutoCEP ligadas, o campo de
+                // rua usa a lista do AutoCEP (o navegador abriria outra por cima).
+                if ('address_1' === campo && params.general.address_suggest) {
+                    return;
+                }
+
                 var $campo = $('#' + secao + '_' + campo);
 
                 if ($campo.length) {
@@ -481,8 +487,542 @@ jQuery(function ($) {
     };
 
     /* -----------------------------------------------------------------
+     * Módulo: Autocompletar endereço no Checkout em Blocos
+     * ------------------------------------------------------------- */
+
+    /**
+     * O Checkout em Blocos (padrão nas instalações novas do WooCommerce)
+     * é renderizado em React: os campos têm IDs diferentes
+     * ("shipping-postcode" em vez de "shipping_postcode") e alterar o
+     * valor do input via jQuery não atualiza o estado do formulário.
+     * Por isso, lemos e escrevemos o endereço diretamente no store de
+     * dados do WooCommerce ("wc/store/cart"), que é a fonte de verdade
+     * dos campos — o formulário se atualiza sozinho e o frete é
+     * recalculado automaticamente.
+     */
+    var AutoCEPBlockCheckout = {
+        STORE: 'wc/store/cart',
+
+        state: {
+            shipping: { lastCep: '', fetching: false, lastBairro: '', timer: null },
+            billing: { lastCep: '', fetching: false, lastBairro: '', timer: null },
+        },
+
+        init: function (tentativas) {
+            if (!params.is_checkout || !params.general) {
+                return;
+            }
+
+            if (!params.general.enable_billing && !params.general.enable_shipping) {
+                return;
+            }
+
+            if (!document.querySelector('.wp-block-woocommerce-checkout, .wc-block-checkout')) {
+                return;
+            }
+
+            var tentativa = tentativas || 0;
+
+            if (!this.getStore()) {
+                // O store é registrado pelos scripts do WooCommerce Blocks;
+                // se ainda não estiver disponível, tenta de novo em instantes.
+                if (tentativa < 20) {
+                    setTimeout(this.init.bind(this, tentativa + 1), 250);
+                }
+
+                return;
+            }
+
+            var self = this;
+            var dados = this.getCustomerData();
+
+            ['shipping', 'billing'].forEach(function (section) {
+                var endereco = self.getAddress(dados, section);
+
+                if (!endereco) {
+                    return;
+                }
+
+                // CEP já salvo, mas sem endereço: preenche logo na abertura.
+                // Com endereço já preenchido, não sobrescrevemos nada.
+                var cep = self.onlyDigits(endereco.postcode);
+                self.state[section].lastCep = cep;
+
+                if (8 === cep.length && !endereco.address_1 && self.sectionEnabled(section)) {
+                    self.fetchAndFill(section, cep);
+                }
+            });
+
+            wp.data.subscribe(function () {
+                self.onStoreChange();
+            });
+        },
+
+        getStore: function () {
+            try {
+                return window.wp && wp.data && wp.data.select(this.STORE)
+                    && typeof wp.data.select(this.STORE).getCustomerData === 'function';
+            } catch (e) {
+                return false;
+            }
+        },
+
+        getCustomerData: function () {
+            return wp.data.select(this.STORE).getCustomerData() || {};
+        },
+
+        getAddress: function (dados, section) {
+            return 'billing' === section ? dados.billingAddress : dados.shippingAddress;
+        },
+
+        onlyDigits: function (valor) {
+            return String(valor || '').replace(/\D/g, '');
+        },
+
+        usesShippingAsBilling: function () {
+            try {
+                var checkout = wp.data.select('wc/store/checkout');
+
+                return !!(checkout && checkout.getUseShippingAsBilling && checkout.getUseShippingAsBilling());
+            } catch (e) {
+                return false;
+            }
+        },
+
+        /**
+         * No checkout em blocos o cliente normalmente só vê o endereço de
+         * entrega (a cobrança segue o mesmo endereço). Por isso, se apenas
+         * a opção de "Cobrança" estiver ativa no painel, ainda assim
+         * preenchemos a entrega quando ela também é usada como cobrança.
+         */
+        sectionEnabled: function (section) {
+            if ('billing' === section) {
+                // Cobrança igual à entrega: o WooCommerce copia o endereço
+                // de entrega sozinho, então não buscamos o CEP duas vezes.
+                return !!params.general.enable_billing && !this.usesShippingAsBilling();
+            }
+
+            return !!params.general.enable_shipping
+                || (!!params.general.enable_billing && this.usesShippingAsBilling());
+        },
+
+        onStoreChange: function () {
+            var self = this;
+            var dados = this.getCustomerData();
+
+            ['shipping', 'billing'].forEach(function (section) {
+                var endereco = self.getAddress(dados, section);
+
+                if (!endereco) {
+                    return;
+                }
+
+                var cep = self.onlyDigits(endereco.postcode);
+                var estado = self.state[section];
+
+                if (cep === estado.lastCep) {
+                    return;
+                }
+
+                estado.lastCep = cep;
+                clearTimeout(estado.timer);
+                self.showFeedback(section, '');
+
+                if (8 !== cep.length || !self.sectionEnabled(section)) {
+                    return;
+                }
+
+                if (endereco.country && 'BR' !== endereco.country) {
+                    return;
+                }
+
+                // Debounce: o store é atualizado a cada tecla digitada.
+                estado.timer = setTimeout(function () {
+                    self.fetchAndFill(section, cep);
+                }, 500);
+            });
+        },
+
+        fetchAndFill: function (section, cep) {
+            var self = this;
+            var estado = this.state[section];
+
+            if (estado.fetching) {
+                return;
+            }
+
+            estado.fetching = true;
+
+            $.ajax({
+                type: 'POST',
+                url: params.ajax_url,
+                dataType: 'json',
+                timeout: 15000,
+                data: {
+                    action: 'autocep_get_address',
+                    cep: cep,
+                    nonce: params.nonce,
+                },
+            })
+                .done(function (response) {
+                    if (!response || !response.success) {
+                        self.showFeedback(section, (response && response.data && response.data.message) || params.messages.not_found);
+                        return;
+                    }
+
+                    // O cliente pode ter alterado o CEP enquanto a busca
+                    // estava em andamento: descarta a resposta antiga.
+                    if (estado.lastCep !== cep) {
+                        return;
+                    }
+
+                    self.populate(section, response.data);
+                })
+                .fail(function () {
+                    self.showFeedback(section, params.messages.generic_error);
+                })
+                .always(function () {
+                    estado.fetching = false;
+                });
+        },
+
+        populate: function (section, data) {
+            var estado = this.state[section];
+            var atual = this.getAddress(this.getCustomerData(), section) || {};
+            var novo = {
+                address_1: data.logradouro || '',
+                city: data.localidade || '',
+                state: data.uf || '',
+            };
+
+            if (!atual.country) {
+                novo.country = 'BR';
+            }
+
+            // O checkout em blocos não tem campo de Bairro: usamos o
+            // Complemento (address_2), sem apagar o que o cliente digitou.
+            if (data.bairro && (!atual.address_2 || atual.address_2 === estado.lastBairro)) {
+                novo.address_2 = data.bairro;
+                estado.lastBairro = data.bairro;
+            }
+
+            var acoes = wp.data.dispatch(this.STORE);
+
+            if ('billing' === section) {
+                acoes.setBillingAddress(novo);
+            } else {
+                acoes.setShippingAddress(novo);
+            }
+
+            this.showFeedback(section, data.logradouro ? '' : params.messages.no_street);
+
+            var foco = document.getElementById(section + '-address_1');
+
+            if (!data.logradouro && foco) {
+                foco.focus();
+            }
+        },
+
+        /**
+         * Mostra (ou remove, com mensagem vazia) um aviso logo abaixo do
+         * campo de CEP do checkout em blocos.
+         */
+        showFeedback: function (section, mensagem) {
+            var campo = document.getElementById(section + '-postcode');
+
+            if (!campo) {
+                return;
+            }
+
+            var $container = $(campo).closest('.wc-block-components-text-input');
+
+            if (!$container.length) {
+                $container = $(campo).parent();
+            }
+
+            var $existente = $container.next('.autocep-cep-feedback-notice');
+
+            if (!mensagem) {
+                $existente.remove();
+                return;
+            }
+
+            if ($existente.length) {
+                $existente.text(mensagem);
+                return;
+            }
+
+            $('<span class="autocep-cep-feedback-notice" role="alert"></span>').text(mensagem).insertAfter($container);
+        },
+    };
+
+    /* -----------------------------------------------------------------
      * Módulo: Simulador de Frete (Produto e Checkout)
      * ------------------------------------------------------------- */
+    /* -----------------------------------------------------------------
+     * Módulo: Sugestões de endereço enquanto o cliente digita a rua
+     * ------------------------------------------------------------- */
+
+    /**
+     * Lista de ruas reais embaixo do campo "Endereço". Ao escolher, preenche
+     * rua, bairro, cidade, estado e o CEP (útil para quem não sabe o CEP).
+     * A busca é feita no servidor: ViaCEP (precisa de cidade e estado) ou
+     * Google Places, se a loja tiver chave — a chave nunca vem ao navegador.
+     */
+    var AutoCEPAddressSuggest = {
+        DEBOUNCE_MS: 350,
+
+        timer: null,
+        requisicao: null,
+        ultimaBusca: '',
+        // Sessão do Google (agrupa digitação + escolha numa só cobrança).
+        sessao: '',
+
+        init: function () {
+            if (!params.is_checkout || !params.general || !params.general.address_suggest) {
+                return;
+            }
+
+            var self = this;
+
+            $(document.body).on('input.autocep-sug', '#billing_address_1, #shipping_address_1', function () {
+                self.onType($(this));
+            });
+
+            $(document.body).on('keydown.autocep-sug', '#billing_address_1, #shipping_address_1', function (evento) {
+                self.onKey($(this), evento);
+            });
+
+            // Fecha ao sair do campo (com atraso para o clique na sugestão contar).
+            $(document.body).on('blur.autocep-sug', '#billing_address_1, #shipping_address_1', function () {
+                var $campo = $(this);
+
+                setTimeout(function () {
+                    self.close($campo);
+                }, 200);
+            });
+
+            this.prepareFields();
+            $(document.body).on('updated_checkout wc_fragments_loaded', this.prepareFields.bind(this));
+        },
+
+        /**
+         * O preenchimento automático do navegador abre outra lista por cima
+         * da nossa no campo de rua; nele, a lista do AutoCEP tem prioridade.
+         */
+        prepareFields: function () {
+            $('#billing_address_1, #shipping_address_1').attr({
+                autocomplete: 'off',
+                'aria-autocomplete': 'list',
+                role: 'combobox',
+                'aria-expanded': 'false',
+            });
+        },
+
+        section: function ($campo) {
+            return 0 === $campo.attr('id').indexOf('shipping') ? 'shipping' : 'billing';
+        },
+
+        lista: function ($campo) {
+            var $linha = $campo.closest('.form-row');
+            var $lista = $linha.find('.autocep-suggest');
+
+            if (!$lista.length) {
+                var id = $campo.attr('id') + '-sugestoes';
+
+                $linha.css('position', 'relative');
+                $lista = $('<ul class="autocep-suggest" role="listbox" hidden></ul>').attr('id', id).appendTo($linha);
+                $campo.attr('aria-controls', id);
+            }
+
+            return $lista;
+        },
+
+        onType: function ($campo) {
+            var self  = this;
+            var texto = $.trim($campo.val());
+
+            clearTimeout(this.timer);
+
+            if (texto.length < (params.general.suggest_min_chars || 3)) {
+                this.close($campo);
+                return;
+            }
+
+            this.timer = setTimeout(function () {
+                self.search($campo, texto);
+            }, this.DEBOUNCE_MS);
+        },
+
+        search: function ($campo, texto) {
+            var self    = this;
+            var section = this.section($campo);
+            var cidade  = $('#' + section + '_city').val() || '';
+            var uf      = $('#' + section + '_state').val() || '';
+            var chave   = section + '|' + texto + '|' + cidade + '|' + uf;
+
+            if (chave === this.ultimaBusca) {
+                return;
+            }
+
+            this.ultimaBusca = chave;
+
+            if (!this.sessao) {
+                this.sessao = 'acs' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            }
+
+            if (this.requisicao) {
+                this.requisicao.abort();
+            }
+
+            this.requisicao = $.ajax({
+                type: 'POST',
+                url: params.ajax_url,
+                dataType: 'json',
+                timeout: 8000,
+                data: {
+                    action: 'autocep_address_suggest',
+                    nonce: params.nonce,
+                    q: texto,
+                    cidade: cidade,
+                    uf: uf,
+                    sessao: this.sessao,
+                },
+            }).done(function (resposta) {
+                // O cliente pode ter continuado digitando: ignora resposta velha.
+                if (!resposta || !resposta.success || $.trim($campo.val()) !== texto || !$campo.is(':focus')) {
+                    return;
+                }
+
+                self.render($campo, resposta.data.items || [], !!resposta.data.need_city);
+            });
+        },
+
+        render: function ($campo, itens, precisaCidade) {
+            var self   = this;
+            var $lista = this.lista($campo).empty();
+
+            if (!itens.length) {
+                if (precisaCidade) {
+                    $lista.append($('<li class="autocep-suggest__hint"></li>').text(params.messages.suggest_need_city));
+                    this.open($campo, $lista);
+                } else {
+                    this.close($campo);
+                }
+
+                return;
+            }
+
+            itens.forEach(function (item, indice) {
+                $('<li class="autocep-suggest__item" role="option"></li>')
+                    .attr({ id: $lista.attr('id') + '-' + indice, 'aria-selected': 'false' })
+                    .data('item', item)
+                    .append($('<span class="autocep-suggest__label"></span>').text(item.label))
+                    .append($('<span class="autocep-suggest__sub"></span>').text(item.sub || ''))
+                    // mousedown (e não click): acontece antes do blur do campo.
+                    .on('mousedown', function (evento) {
+                        evento.preventDefault();
+                        self.choose($campo, item);
+                    })
+                    .appendTo($lista);
+            });
+
+            this.open($campo, $lista);
+        },
+
+        open: function ($campo, $lista) {
+            $lista.prop('hidden', false);
+            $campo.attr('aria-expanded', 'true');
+        },
+
+        close: function ($campo) {
+            var $lista = $campo.closest('.form-row').find('.autocep-suggest');
+
+            $lista.prop('hidden', true).empty();
+            $campo.attr('aria-expanded', 'false').removeAttr('aria-activedescendant');
+        },
+
+        onKey: function ($campo, evento) {
+            var $lista = $campo.closest('.form-row').find('.autocep-suggest');
+            var $itens = $lista.find('.autocep-suggest__item');
+
+            if ($lista.prop('hidden') || !$itens.length) {
+                return;
+            }
+
+            var $ativo = $itens.filter('.is-active');
+            var indice = $itens.index($ativo);
+
+            if (40 === evento.which || 38 === evento.which) { // setas para baixo / para cima
+                evento.preventDefault();
+                indice = 40 === evento.which ? Math.min($itens.length - 1, indice + 1) : Math.max(0, indice - 1);
+                $itens.removeClass('is-active').attr('aria-selected', 'false');
+                $ativo = $itens.eq(indice).addClass('is-active').attr('aria-selected', 'true');
+                $campo.attr('aria-activedescendant', $ativo.attr('id'));
+            } else if (13 === evento.which && $ativo.length) { // Enter escolhe (e não envia o pedido)
+                evento.preventDefault();
+                evento.stopImmediatePropagation();
+                this.choose($campo, $ativo.data('item'));
+            } else if (27 === evento.which) { // Esc fecha
+                this.close($campo);
+            }
+        },
+
+        choose: function ($campo, item) {
+            var self     = this;
+            var section  = this.section($campo);
+            var digitado = $.trim($campo.val());
+
+            this.close($campo);
+            this.ultimaBusca = '';
+
+            if (item.place_id) {
+                // Google: busca o endereço completo (com CEP) no servidor.
+                $.post(params.ajax_url, {
+                    action: 'autocep_address_details',
+                    nonce: params.nonce,
+                    place_id: item.place_id,
+                    sessao: this.sessao,
+                }, function (resposta) {
+                    if (resposta && resposta.success) {
+                        self.apply(section, resposta.data, digitado);
+                    }
+                }, 'json');
+
+                this.sessao = '';
+                return;
+            }
+
+            this.apply(section, item, digitado);
+        },
+
+        apply: function (section, dados, digitado) {
+            // "CEP geral da cidade": mantém a rua que o cliente digitou.
+            var endereco = $.extend({}, dados, {
+                logradouro: dados.logradouro || digitado,
+            });
+
+            if ('undefined' !== typeof AutoCEPCheckout) {
+                AutoCEPCheckout.populateFields(section, endereco);
+            }
+
+            if (dados.cep && 8 === String(dados.cep).length) {
+                // Evita que o autocompletar por CEP refaça a busca.
+                if ('undefined' !== typeof AutoCEPCheckout && AutoCEPCheckout.state[section]) {
+                    AutoCEPCheckout.state[section].lastCep = String(dados.cep);
+                }
+
+                $('#' + section + '_postcode').val(String(dados.cep).replace(/^(\d{5})(\d{3})$/, '$1-$2')).trigger('change');
+            }
+
+            if (dados.numero) {
+                $('#' + section + '_number').val(dados.numero).trigger('change');
+            }
+
+            $(document.body).trigger('update_checkout');
+        },
+    };
+
     var AutoCEPShipping = {
         init: function () {
             this.bindProductBox();
@@ -1020,6 +1560,43 @@ jQuery(function ($) {
     }
 
     AutoCEPCheckout.init();
+    AutoCEPAddressSuggest.init();
+
+    /**
+     * Sem "carregando" a cada letra digitada.
+     *
+     * O WooCommerce recalcula frete e totais (e bloqueia o resumo com o
+     * ícone de carregamento) a cada pausa na digitação de QUALQUER campo
+     * de endereço — inclusive rua, número, complemento e bairro, que não
+     * mudam o frete. Aqui esses campos deixam de disparar o recálculo
+     * enquanto o cliente digita/sai do campo. CEP, cidade, estado e país
+     * continuam recalculando normalmente, assim como o preenchimento
+     * automático do AutoCEP (que usa eventos do jQuery, não do navegador).
+     */
+    if (params.is_checkout && document.addEventListener) {
+        var CAMPOS_SEM_RECALCULO = /^(billing|shipping)_(address_1|address_2|number|neighborhood|bairro|complement|complemento)$/;
+        // Teclas que a lista de sugestões e o checkout em etapas usam.
+        var TECLAS_LIVRES = [9, 13, 27, 38, 40];
+
+        document.addEventListener('keydown', function (evento) {
+            var alvo = evento.target;
+
+            if (alvo && alvo.id && CAMPOS_SEM_RECALCULO.test(alvo.id) && TECLAS_LIVRES.indexOf(evento.keyCode) === -1) {
+                // Fase de captura: o evento não chega ao "queue_update_checkout"
+                // do WooCommerce. A digitação em si não é afetada.
+                evento.stopPropagation();
+            }
+        }, true);
+
+        document.addEventListener('change', function (evento) {
+            var alvo = evento.target;
+
+            if (alvo && alvo.id && CAMPOS_SEM_RECALCULO.test(alvo.id) && evento.isTrusted) {
+                evento.stopPropagation();
+            }
+        }, true);
+    }
+    AutoCEPBlockCheckout.init();
     AutoCEPShipping.init();
 
     /**

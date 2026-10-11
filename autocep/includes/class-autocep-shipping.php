@@ -36,6 +36,10 @@ class AutoCEP_Shipping
 
         add_filter('woocommerce_package_rates', array($this, 'inject_autonomous_rates'), 20, 2);
 
+        // Estado sempre coerente com o CEP (zona de entrega e "Entrega para").
+        add_filter('woocommerce_cart_shipping_packages', array($this, 'fix_package_state'), 20);
+        add_filter('woocommerce_cart_calculate_shipping_address', array($this, 'fix_calculator_address'), 20);
+
         add_shortcode('shipping_calculator_on_product_page', array($this, 'render_shipping_calculator_shortcode'));
     }
 
@@ -216,6 +220,7 @@ class AutoCEP_Shipping
                     placeholder="<?php esc_attr_e('Digite seu CEP', 'autocep'); ?>"
                     maxlength="9"
                     inputmode="numeric"
+                    autocomplete="postal-code"
                 />
                 <button type="button" class="autocep-shipping-calc-btn"><?php esc_html_e('Calcular', 'autocep'); ?></button>
             </div>
@@ -261,6 +266,7 @@ class AutoCEP_Shipping
                     placeholder="<?php esc_attr_e('Digite seu CEP', 'autocep'); ?>"
                     maxlength="9"
                     inputmode="numeric"
+                    autocomplete="postal-code"
                 />
                 <button type="button" class="autocep-shipping-calc-btn"><?php esc_html_e('Calcular', 'autocep'); ?></button>
             </div>
@@ -326,6 +332,12 @@ class AutoCEP_Shipping
             $quantidade = 1;
         }
 
+        $nao_existe = $this->cep_not_found_message($cep);
+
+        if ($nao_existe) {
+            wp_send_json_error(array('message' => $nao_existe));
+        }
+
         $package = $this->build_package_for_product($product, $quantidade, $cep);
         $rates   = $this->calculate_rates($package);
 
@@ -338,10 +350,7 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => $this->resolve_empty_rates_message($cep)));
         }
 
-        if (function_exists('WC') && WC()->customer) {
-            WC()->customer->set_shipping_postcode($cep);
-            WC()->customer->set_billing_postcode($cep);
-        }
+        $this->apply_customer_location($cep, false);
 
         $subtotal_produto = (float) $product->get_price() * $quantidade;
 
@@ -402,6 +411,12 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('Seu carrinho está vazio.', 'autocep')));
         }
 
+        $nao_existe = $this->cep_not_found_message($cep);
+
+        if ($nao_existe) {
+            wp_send_json_error(array('message' => $nao_existe));
+        }
+
         $package = $this->build_package_for_cart($cep);
         $rates   = $this->calculate_rates($package);
 
@@ -451,10 +466,8 @@ class AutoCEP_Shipping
 
         $cep = $this->sanitize_cep($_POST['cep'] ?? '');
 
-        if ($cep && function_exists('WC') && WC()->customer) {
-            WC()->customer->set_shipping_postcode($cep);
-            WC()->customer->set_billing_postcode($cep);
-            WC()->customer->save();
+        if ($cep) {
+            $this->apply_customer_location($cep);
         }
 
         wp_send_json_success();
@@ -506,11 +519,7 @@ class AutoCEP_Shipping
             wp_send_json_error(array('message' => __('Este frete não está mais disponível para o CEP informado.', 'autocep')));
         }
 
-        if (WC()->customer) {
-            WC()->customer->set_shipping_postcode($cep);
-            WC()->customer->set_billing_postcode($cep);
-            WC()->customer->save();
-        }
+        $this->apply_customer_location($cep);
 
         $escolhidos    = WC()->session->get('chosen_shipping_methods', array());
         $escolhidos    = is_array($escolhidos) ? $escolhidos : array();
@@ -541,21 +550,115 @@ class AutoCEP_Shipping
             );
         }
 
-        $estado_sessao = (function_exists('WC') && WC()->customer) ? WC()->customer->get_shipping_state() : '';
-        $cidade_sessao = (function_exists('WC') && WC()->customer) ? WC()->customer->get_shipping_city() : '';
-
+        // Sem resposta das APIs: o estado vem das faixas de CEP dos Correios.
+        // Antes era usado o estado guardado na sessão, que podia ser de outra
+        // busca (ex.: CEP do Piauí calculado como Paraíba).
         if ($this->logger) {
-            $this->logger->log('shipping-destination', $cep, __('Não foi possível determinar o estado/cidade do CEP para o cálculo de frete; usando dados da sessão como alternativa.', 'autocep'), 'warning');
+            $this->logger->log('shipping-destination', $cep, __('Não foi possível consultar o endereço do CEP; o estado foi definido pela faixa de CEP dos Correios.', 'autocep'), 'warning');
         }
 
         return array(
             'country'   => 'BR',
-            'state'     => $estado_sessao,
+            'state'     => AutoCEP_Api::uf_from_cep($cep),
             'postcode'  => $cep,
-            'city'      => $cidade_sessao,
+            'city'      => '',
             'address'   => '',
             'address_2' => '',
         );
+    }
+
+    /**
+     * Mensagem de "CEP não encontrado" quando os Correios confirmam que o CEP
+     * não existe — nesse caso não faz sentido calcular frete. Retorna '' se
+     * o CEP existe ou se não foi possível consultar (APIs fora do ar).
+     */
+    private function cep_not_found_message($cep)
+    {
+        $endereco = AutoCEP_Api::find_address($cep, $this->logger);
+
+        if (is_wp_error($endereco) && 'autocep_not_found' === $endereco->get_error_code()) {
+            $options = AutoCEP_Admin::get_options();
+
+            return $options['messages']['not_found'];
+        }
+
+        return '';
+    }
+
+    /**
+     * Grava o endereço do CEP simulado no cliente — CEP, estado e cidade
+     * juntos. Gravar só o CEP deixava o estado e a cidade da busca
+     * anterior (ex.: "Entrega para Paraíba, 64000001").
+     */
+    private function apply_customer_location($cep, $salvar = true)
+    {
+        if (!function_exists('WC') || !WC()->customer) {
+            return;
+        }
+
+        $destino = $this->resolve_destination_from_cep($cep);
+
+        foreach (array('shipping', 'billing') as $tipo) {
+            WC()->customer->{'set_' . $tipo . '_country'}('BR');
+            WC()->customer->{'set_' . $tipo . '_postcode'}($cep);
+            WC()->customer->{'set_' . $tipo . '_state'}($destino['state']);
+            WC()->customer->{'set_' . $tipo . '_city'}($destino['city']);
+        }
+
+        if ($salvar) {
+            WC()->customer->save();
+        }
+    }
+
+    /**
+     * Garantia final para todo cálculo de frete (carrinho, checkout,
+     * simulador): no Brasil, o estado do pacote é sempre o do CEP. Assim a
+     * Zona de Entrega certa é escolhida mesmo se o estado da sessão ou do
+     * formulário estiver desatualizado.
+     */
+    public function fix_package_state($pacotes)
+    {
+        foreach ($pacotes as $indice => $pacote) {
+            if (empty($pacote['destination']) || 'BR' !== (isset($pacote['destination']['country']) ? $pacote['destination']['country'] : '')) {
+                continue;
+            }
+
+            $uf = AutoCEP_Api::uf_from_cep(isset($pacote['destination']['postcode']) ? $pacote['destination']['postcode'] : '');
+
+            if ($uf && $uf !== $pacote['destination']['state']) {
+                $pacotes[$indice]['destination']['state'] = $uf;
+            }
+        }
+
+        return $pacotes;
+    }
+
+    /**
+     * Calculadora de frete nativa do carrinho ("Mudar endereço"): o cliente
+     * digita só o CEP e o estado que estava selecionado (de outra busca)
+     * era mantido. Aqui o estado e a cidade passam a vir do CEP.
+     */
+    public function fix_calculator_address($endereco)
+    {
+        if ('BR' !== (isset($endereco['country']) ? $endereco['country'] : '') || empty($endereco['postcode'])) {
+            return $endereco;
+        }
+
+        $cep   = preg_replace('/\D/', '', $endereco['postcode']);
+        $dados = AutoCEP_Api::find_address($cep, $this->logger);
+
+        if (!is_wp_error($dados) && !empty($dados['uf'])) {
+            $endereco['state'] = $dados['uf'];
+            $endereco['city']  = $dados['localidade'];
+        } elseif ($uf = AutoCEP_Api::uf_from_cep($cep)) {
+            if ($uf !== (isset($endereco['state']) ? $endereco['state'] : '')) {
+                $endereco['city'] = '';
+            }
+
+            $endereco['state'] = $uf;
+        }
+
+        return $endereco;
     }
 
     private function build_package_for_product(WC_Product $product, $quantidade, $cep)
@@ -688,6 +791,9 @@ class AutoCEP_Shipping
             'state'    => isset($package['destination']['state']) ? $package['destination']['state'] : '',
             'items'    => $itens,
             'coupons'  => !empty($package['applied_coupons']) ? $package['applied_coupons'] : array(),
+            // Muda sempre que um método de entrega é salvo (ex.: a Tabela de
+            // Frete), para o simulador não exibir valores antigos do cache.
+            'version'  => class_exists('WC_Cache_Helper') ? WC_Cache_Helper::get_transient_version('shipping') : '',
         );
 
         return self::CACHE_PREFIX . md5(wp_json_encode($assinatura));

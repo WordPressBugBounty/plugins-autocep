@@ -60,7 +60,10 @@ class AutoCEP_Logger
             array('%s', '%s', '%s', '%s', '%s')
         );
 
-        if (function_exists('error_log')) {
+        // Só no modo de depuração do WordPress: o log do servidor não deve
+        // receber o CEP dos clientes em operação normal (os registros ficam
+        // na aba Diagnóstico e Logs do AutoCEP).
+        if (defined('WP_DEBUG') && WP_DEBUG && function_exists('error_log')) {
             error_log(sprintf('[AutoCEP][%s][%s] %s (CEP: %s)', $tipo, $api, $mensagem, $cep));
         }
 

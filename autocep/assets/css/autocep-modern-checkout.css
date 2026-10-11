@@ -1,0 +1,1760 @@
+/**
+ * AutoCEP — Checkout Moderno (Multietapas)
+ *
+ * Mobile-first. Todos os seletores ficam sob .autocep-mc (ou .autocep-mc-pix
+ * na página de pedido recebido) para não interferir no resto do tema. As
+ * regras com !important neutralizam floats/larguras que temas populares
+ * (Astra, Hello Elementor, GeneratePress, Storefront) aplicam às colunas e
+ * campos do checkout clássico.
+ */
+
+:root {
+    --autocep-mc-accent: #1d4ed8;
+    --autocep-mc-text: #1f2937;
+    --autocep-mc-muted: #6b7280;
+    --autocep-mc-border: #e5e7eb;
+    --autocep-mc-bg: #ffffff;
+    --autocep-mc-soft: #f9fafb;
+    --autocep-mc-danger: #dc2626;
+    --autocep-mc-radius: 12px;
+}
+
+/* Blocos originais já movidos para dentro das etapas. */
+.autocep-mc__moved {
+    display: none !important;
+}
+
+.autocep-mc {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+    width: 100%;
+    float: none;
+    clear: both;
+    grid-column: 1 / -1;
+    margin: 0 0 24px;
+    color: var(--autocep-mc-text);
+    box-sizing: border-box;
+}
+
+.autocep-mc *,
+.autocep-mc *::before,
+.autocep-mc *::after {
+    box-sizing: border-box;
+}
+
+/* ---------- Barra de etapas ---------- */
+
+.autocep-mc__progress {
+    display: flex;
+    margin: 0 0 16px !important;
+    padding: 0 !important;
+    list-style: none !important;
+    counter-reset: none;
+}
+
+.autocep-mc__progress-item {
+    position: relative;
+    flex: 1 1 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+    text-align: center;
+}
+
+/* Linha que liga as etapas. */
+.autocep-mc__progress-item + .autocep-mc__progress-item::before {
+    content: "";
+    position: absolute;
+    top: 15px;
+    right: 50%;
+    width: 100%;
+    height: 2px;
+    background: var(--autocep-mc-border);
+    z-index: 0;
+}
+
+.autocep-mc__progress-item.is-done + .autocep-mc__progress-item::before,
+.autocep-mc__progress-item.is-active::before {
+    background: var(--autocep-mc-accent);
+}
+
+.autocep-mc__progress-btn {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-muted) !important;
+    font: inherit;
+    font-size: 12px !important;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: default;
+}
+
+.autocep-mc__progress-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 2px solid var(--autocep-mc-border);
+    border-radius: 50%;
+    background: var(--autocep-mc-bg);
+    font-size: 14px;
+    font-weight: 700;
+    transition: all 0.2s ease;
+}
+
+.autocep-mc__progress-item.is-active .autocep-mc__progress-btn {
+    color: var(--autocep-mc-accent) !important;
+}
+
+.autocep-mc__progress-item.is-active .autocep-mc__progress-num {
+    border-color: var(--autocep-mc-accent);
+    color: var(--autocep-mc-accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--autocep-mc-accent) 15%, transparent);
+}
+
+.autocep-mc__progress-item.is-done .autocep-mc__progress-btn {
+    color: var(--autocep-mc-text) !important;
+    cursor: pointer;
+}
+
+.autocep-mc__progress-item.is-done .autocep-mc__progress-num {
+    border-color: var(--autocep-mc-accent);
+    background: var(--autocep-mc-accent);
+    color: #fff;
+    font-size: 0;
+}
+
+/* Etapa concluída: troca o número por um ✓. */
+.autocep-mc__progress-item.is-done .autocep-mc__progress-num::after {
+    content: "✓";
+    font-size: 15px;
+}
+
+/* ---------- Painéis das etapas ---------- */
+
+.autocep-mc__panel {
+    display: none;
+    padding: 16px 14px;
+    border: 1px solid var(--autocep-mc-border);
+    border-radius: var(--autocep-mc-radius);
+    background: var(--autocep-mc-bg);
+}
+
+.autocep-mc__panel.is-active {
+    display: block;
+    animation: autocep-mc-fade 0.25s ease;
+}
+
+@keyframes autocep-mc-fade {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+.autocep-mc__panel-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 14px !important;
+    padding: 0 !important;
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    line-height: 1.3 !important;
+    color: var(--autocep-mc-text);
+}
+
+.autocep-mc__panel-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--autocep-mc-accent);
+    color: #fff;
+    font-size: 14px;
+}
+
+.autocep-mc__subtitle,
+.autocep-mc .woocommerce-shipping-fields h3,
+.autocep-mc .woocommerce-additional-fields > h3 {
+    margin: 22px 0 12px !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+}
+
+/* O título "Detalhes de faturamento" é redundante com o da etapa. */
+.autocep-mc .woocommerce-billing-fields > h3,
+.autocep-mc .autocep-mc-hidden-heading {
+    display: none !important;
+}
+
+/* ---------- Campos ---------- */
+
+.autocep-mc .woocommerce-billing-fields__field-wrapper,
+.autocep-mc .woocommerce-shipping-fields__field-wrapper,
+.autocep-mc .shipping_address,
+.autocep-mc__fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+}
+
+.autocep-mc .shipping_address[style*="display: none"] {
+    display: none !important;
+}
+
+.autocep-mc .form-row {
+    float: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.autocep-mc .form-row label {
+    display: block;
+    margin: 0 0 4px !important;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--autocep-mc-text);
+}
+
+.autocep-mc .form-row .optional {
+    font-weight: 400;
+    color: var(--autocep-mc-muted);
+}
+
+/* 16px evita o zoom automático do iPhone ao tocar no campo. */
+.autocep-mc .form-row input.input-text,
+.autocep-mc .form-row select,
+.autocep-mc .form-row textarea,
+.autocep-mc .select2-container .select2-selection--single {
+    width: 100% !important;
+    min-height: 42px;
+    height: auto;
+    padding: 8px 12px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    background-color: var(--autocep-mc-bg) !important;
+    box-shadow: none !important;
+    font-size: 16px !important;
+    line-height: 1.4 !important;
+    color: var(--autocep-mc-text) !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.autocep-mc .select2-container .select2-selection--single .select2-selection__rendered {
+    padding: 0 !important;
+    line-height: 26px !important;
+}
+
+.autocep-mc .select2-container .select2-selection--single .select2-selection__arrow {
+    height: 40px !important;
+    right: 8px !important;
+}
+
+.autocep-mc .form-row textarea {
+    min-height: 72px;
+}
+
+.autocep-mc .form-row input.input-text:focus,
+.autocep-mc .form-row select:focus,
+.autocep-mc .form-row textarea:focus,
+.autocep-mc .select2-container--focus .select2-selection--single {
+    outline: none !important;
+    border-color: var(--autocep-mc-accent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--autocep-mc-accent) 18%, transparent) !important;
+}
+
+.autocep-mc .autocep-mc-invalid input.input-text,
+.autocep-mc .autocep-mc-invalid select,
+.autocep-mc .autocep-mc-invalid .select2-selection--single {
+    border-color: var(--autocep-mc-danger) !important;
+}
+
+.autocep-mc__error {
+    display: block;
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--autocep-mc-danger);
+}
+
+/* ---------- Modo compacto ---------- */
+
+.autocep-mc .autocep-mc-collapsed {
+    display: none !important;
+}
+
+.autocep-mc__reveal {
+    width: 100%;
+    margin: 0 !important;
+    padding: 4px 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 14px !important;
+    font-weight: 600;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.autocep-mc__reveal:hover {
+    text-decoration: underline;
+}
+
+/* ---------- Botões ---------- */
+
+.autocep-mc__nav {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.autocep-mc-btn,
+.autocep-mc .autocep-mc-btn,
+.autocep-mc #place_order {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 46px;
+    padding: 12px 22px !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    background: var(--autocep-mc-accent) !important;
+    color: #fff !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    cursor: pointer;
+    transition: filter 0.15s ease, transform 0.05s ease;
+}
+
+.autocep-mc-btn:hover,
+.autocep-mc #place_order:hover {
+    filter: brightness(1.08);
+}
+
+.autocep-mc-btn:active,
+.autocep-mc #place_order:active {
+    transform: translateY(1px);
+}
+
+.autocep-mc__back {
+    padding: 8px 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-muted) !important;
+    font-size: 15px !important;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.autocep-mc__back:hover {
+    color: var(--autocep-mc-text) !important;
+}
+
+/* ---------- Forma de entrega (etapa 2) ---------- */
+
+.autocep-mc__shipping {
+    width: 100%;
+}
+
+.autocep-mc__shipping.autocep-mc-invalid .autocep-mc__shipping-list {
+    border-radius: 10px;
+    box-shadow: 0 0 0 2px var(--autocep-mc-danger);
+}
+
+.autocep-mc__shipping-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.autocep-mc__option {
+    display: flex !important;
+    align-items: center;
+    gap: 10px;
+    margin: 0 !important;
+    padding: 11px 14px;
+    border: 1px solid var(--autocep-mc-border);
+    border-radius: 10px;
+    background: var(--autocep-mc-bg);
+    font-size: 14px;
+    font-weight: 500 !important;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.autocep-mc__option input {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    margin: 0 !important;
+    accent-color: var(--autocep-mc-accent);
+}
+
+.autocep-mc__option-label {
+    flex: 1 1 auto;
+}
+
+.autocep-mc__option-label .amount,
+.autocep-mc__option-label .woocommerce-Price-amount {
+    float: right;
+    margin-left: 8px;
+    font-weight: 700;
+}
+
+.autocep-mc__option.is-selected {
+    border-color: var(--autocep-mc-accent);
+    background: color-mix(in srgb, var(--autocep-mc-accent) 6%, #fff);
+}
+
+.autocep-mc__shipping-empty {
+    margin: 0 !important;
+    padding: 14px 16px;
+    border: 1px dashed var(--autocep-mc-border);
+    border-radius: 10px;
+    color: var(--autocep-mc-muted);
+    font-size: 14px;
+}
+
+/* ---------- Pagamento (etapa 3) ---------- */
+
+.autocep-mc #payment {
+    background: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+}
+
+.autocep-mc #payment ul.payment_methods {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 0 16px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    list-style: none !important;
+}
+
+.autocep-mc #payment ul.payment_methods > li {
+    margin: 0 !important;
+    padding: 11px 14px !important;
+    border: 1px solid var(--autocep-mc-border);
+    border-radius: 10px;
+    background: var(--autocep-mc-bg);
+    line-height: 1.4;
+    list-style: none !important;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.autocep-mc #payment ul.payment_methods > li::before {
+    display: none !important;
+}
+
+.autocep-mc #payment ul.payment_methods > li.is-selected {
+    border-color: var(--autocep-mc-accent);
+    background: color-mix(in srgb, var(--autocep-mc-accent) 5%, #fff);
+}
+
+.autocep-mc #payment ul.payment_methods > li > input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    margin: 0 10px 0 0 !important;
+    vertical-align: middle;
+    accent-color: var(--autocep-mc-accent);
+}
+
+.autocep-mc #payment ul.payment_methods > li > label {
+    display: inline !important;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.autocep-mc #payment ul.payment_methods > li > label img {
+    max-height: 24px;
+    width: auto;
+    margin: 0 0 0 8px !important;
+    vertical-align: middle;
+    float: right;
+}
+
+/* Ícones por tipo, antes do nome do método. */
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--pix > label::before,
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--card > label::before,
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--boleto > label::before {
+    display: inline-block;
+    margin-right: 6px;
+}
+
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--pix > label::before { content: "⚡"; }
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--card > label::before { content: "💳"; }
+.autocep-mc #payment ul.payment_methods > li.autocep-mc-pay--boleto > label::before { content: "📄"; }
+
+.autocep-mc #payment div.payment_box {
+    margin: 12px 0 0 !important;
+    padding: 14px !important;
+    border-radius: 8px;
+    background: var(--autocep-mc-soft) !important;
+    color: var(--autocep-mc-text) !important;
+    font-size: 14px;
+}
+
+.autocep-mc #payment div.payment_box::before {
+    display: none !important;
+}
+
+/* Cartão: número em linha inteira; validade e CVV lado a lado. */
+.autocep-mc #payment .payment_box fieldset,
+.autocep-mc #payment .wc-credit-card-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+}
+
+.autocep-mc #payment .payment_box .form-row-first,
+.autocep-mc #payment .payment_box .form-row-last {
+    width: calc(50% - 6px) !important;
+}
+
+.autocep-mc #payment .payment_box .form-row-wide {
+    width: 100% !important;
+}
+
+.autocep-mc #payment .payment_box input.input-text,
+.autocep-mc #payment .payment_box select {
+    font-size: 16px !important;
+    min-height: 46px;
+}
+
+/* Mensagem por tipo de pagamento. */
+.autocep-mc__pay-note {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--autocep-mc-border);
+    background: var(--autocep-mc-soft);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.autocep-mc__pay-note[hidden] {
+    display: none !important;
+}
+
+.autocep-mc__pay-note--pix {
+    border-color: #a7f3d0;
+    background: #ecfdf5;
+    color: #065f46;
+}
+
+.autocep-mc__pay-note--pix::before {
+    content: "⚡ ";
+}
+
+.autocep-mc__pay-note--card {
+    border-color: #bfdbfe;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.autocep-mc__pay-note--card::before {
+    content: "🔒 ";
+}
+
+.autocep-mc__pay-note--boleto {
+    border-color: #fde68a;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.autocep-mc__pay-note--boleto::before {
+    content: "📄 ";
+}
+
+.autocep-mc #payment .place-order {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.autocep-mc #payment .woocommerce-terms-and-conditions-wrapper {
+    margin-bottom: 14px;
+    font-size: 14px;
+}
+
+/* ---------- Resumo do pedido ---------- */
+
+.autocep-mc__summary {
+    order: -1;
+    border: 1px solid var(--autocep-mc-border);
+    border-radius: var(--autocep-mc-radius);
+    background: var(--autocep-mc-soft);
+}
+
+.autocep-mc__summary-toggle {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    margin: 0 !important;
+    padding: 14px 16px !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 15px !important;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.autocep-mc__summary-toggle-label::after {
+    content: " ▾";
+}
+
+.autocep-mc.is-summary-open .autocep-mc__summary-toggle-label::after {
+    content: " ▴";
+}
+
+.autocep-mc__summary-toggle-total {
+    color: var(--autocep-mc-text);
+    font-weight: 700;
+}
+
+.autocep-mc__summary-title {
+    display: none;
+}
+
+.autocep-mc__summary-body {
+    display: none;
+    padding: 0 16px 16px;
+}
+
+.autocep-mc.is-summary-open .autocep-mc__summary-body {
+    display: block;
+}
+
+.autocep-mc__summary table.shop_table {
+    width: 100%;
+    margin: 0 !important;
+    border: 0 !important;
+    border-collapse: collapse;
+    background: none !important;
+    font-size: 14px;
+}
+
+.autocep-mc__summary table.shop_table th,
+.autocep-mc__summary table.shop_table td {
+    padding: 10px 0 !important;
+    border: 0 !important;
+    border-top: 1px solid var(--autocep-mc-border) !important;
+    background: none !important;
+    vertical-align: top;
+}
+
+.autocep-mc__summary table.shop_table td:last-child,
+.autocep-mc__summary table.shop_table th:last-child {
+    text-align: right;
+}
+
+.autocep-mc__summary table.shop_table .order-total th,
+.autocep-mc__summary table.shop_table .order-total td {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+/* No resumo, o frete é escolhido na etapa 2: mostra só o selecionado. */
+.autocep-mc__summary #shipping_method {
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.autocep-mc__summary #shipping_method li {
+    display: none;
+    margin: 0 !important;
+}
+
+.autocep-mc__summary #shipping_method li.autocep-mc-chosen {
+    display: block;
+}
+
+.autocep-mc__summary #shipping_method li input {
+    display: none !important;
+}
+
+/* ---------- Telas maiores ---------- */
+
+@media (min-width: 600px) {
+    .autocep-mc__panel {
+        padding: 22px 24px;
+    }
+
+    .autocep-mc .form-row-first,
+    .autocep-mc .form-row-last {
+        width: calc(50% - 6px) !important;
+    }
+
+    .autocep-mc__nav {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .autocep-mc__nav .autocep-mc-btn {
+        width: auto;
+        min-width: 220px;
+        margin-left: auto;
+    }
+
+    .autocep-mc__progress-btn {
+        font-size: 13px !important;
+    }
+}
+
+@media (min-width: 992px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, 1fr) 360px;
+        align-items: start;
+        gap: 32px;
+    }
+
+    .autocep-mc__summary {
+        order: 0;
+        position: sticky;
+        top: 24px;
+        padding: 20px;
+    }
+
+    .autocep-mc__summary-toggle {
+        display: none !important;
+    }
+
+    .autocep-mc__summary-title {
+        display: block;
+        margin: 0 0 8px !important;
+        font-size: 17px !important;
+        font-weight: 700 !important;
+    }
+
+    .autocep-mc__summary-body {
+        display: block;
+        padding: 0;
+    }
+}
+
+/* Barra de administração fixa do WordPress não cobre o resumo. */
+@media (min-width: 992px) {
+    .admin-bar .autocep-mc__summary {
+        top: 56px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .autocep-mc__panel.is-active {
+        animation: none;
+    }
+}
+
+/* ---------- Pedido recebido: Pix ---------- */
+
+.autocep-mc-pix {
+    max-width: 420px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 1px solid #a7f3d0;
+    border-radius: 14px;
+    background: #ecfdf5;
+    text-align: center;
+}
+
+.autocep-mc-pix__title {
+    margin: 0 0 12px !important;
+    font-size: 18px;
+    font-weight: 700;
+    color: #065f46;
+}
+
+.autocep-mc-pix__qr img,
+.autocep-mc-pix__qr canvas,
+.autocep-mc-pix__qr svg {
+    display: block;
+    width: 220px !important;
+    max-width: 100%;
+    height: auto !important;
+    margin: 0 auto 14px;
+    padding: 10px;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.autocep-mc-pix__code {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border: 1px dashed #6ee7b7;
+    border-radius: 8px;
+    background: #fff;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-all;
+    text-align: left;
+    color: #374151;
+    max-height: 90px;
+    overflow: auto;
+}
+
+.autocep-mc-pix .autocep-mc-pix__copy {
+    background: #059669 !important;
+    --autocep-mc-accent: #059669;
+}
+
+.autocep-mc-pix .autocep-mc-pix__copy.is-copied {
+    background: #047857 !important;
+}
+
+/* ---------- Ajustes v2: compactação, simulador e telas ---------- */
+
+/* Mouse/trackpad (computador): fonte um pouco menor nos campos. No toque
+   ela fica em 16px para o iPhone não ampliar a página. */
+@media (hover: hover) and (pointer: fine) {
+    .autocep-mc .form-row input.input-text,
+    .autocep-mc .form-row select,
+    .autocep-mc .form-row textarea,
+    .autocep-mc .select2-container .select2-selection--single {
+        font-size: 15px !important;
+    }
+}
+
+/* O WooCommerce deixa o rótulo do complemento só para leitores de tela;
+   na etapa ele fica visível, como os demais. */
+.autocep-mc .form-row label.screen-reader-text {
+    position: static !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 0 4px !important;
+    clip: auto !important;
+    clip-path: none !important;
+    overflow: visible !important;
+    white-space: normal !important;
+}
+
+/* Simulador de frete do AutoCEP no topo da etapa Entrega. */
+.autocep-mc .autocep-mc__simulator {
+    width: 100%;
+    max-width: none !important;
+    margin: 0 0 16px !important;
+    padding: 12px 14px !important;
+    border: 1px dashed color-mix(in srgb, var(--autocep-mc-accent) 45%, #fff) !important;
+    border-radius: 10px !important;
+    background: color-mix(in srgb, var(--autocep-mc-accent) 4%, #fff) !important;
+    box-shadow: none !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-cep-input {
+    min-height: 42px;
+}
+
+/* "Calculando o frete..." enquanto o WooCommerce recalcula. */
+.autocep-mc__shipping-loading {
+    display: none;
+    margin: 0 0 8px !important;
+    font-size: 13px;
+    color: var(--autocep-mc-muted);
+}
+
+.autocep-mc__shipping.is-loading .autocep-mc__shipping-loading {
+    display: block;
+}
+
+.autocep-mc__shipping.is-loading .autocep-mc__shipping-list {
+    opacity: 0.5;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
+
+.autocep-mc__shipping-loading::before {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    border: 2px solid var(--autocep-mc-border);
+    border-top-color: var(--autocep-mc-accent);
+    border-radius: 50%;
+    vertical-align: -2px;
+    animation: autocep-mc-spin 0.7s linear infinite;
+}
+
+@keyframes autocep-mc-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Telas bem estreitas (ex.: iPhone SE, 320px). */
+@media (max-width: 360px) {
+    .autocep-mc__panel {
+        padding: 14px 12px;
+    }
+
+    .autocep-mc__progress-label {
+        font-size: 11px;
+    }
+
+    .autocep-mc__progress-num {
+        width: 28px;
+        height: 28px;
+    }
+
+    .autocep-mc__progress-item + .autocep-mc__progress-item::before {
+        top: 13px;
+    }
+
+    .autocep-mc #payment .payment_box .form-row-first,
+    .autocep-mc #payment .payment_box .form-row-last {
+        width: 100% !important;
+    }
+}
+
+/* Tablets: etapas mais estreitas e centralizadas, resumo em cima. */
+@media (min-width: 600px) and (max-width: 991px) {
+    .autocep-mc {
+        max-width: 680px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+}
+
+/* Telas largas: limita a largura total para não esticar os campos. */
+@media (min-width: 1400px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, 760px) 380px;
+        justify-content: center;
+    }
+}
+
+/* Simulador dentro da etapa: campo e botão alinhados, na cor de destaque
+   (sobrepõe o estilo padrão da caixa do AutoCEP, que é mais estreito). */
+.autocep-mc .autocep-mc__simulator .autocep-shipping-title {
+    margin: 0 0 8px !important;
+    font-size: 13px !important;
+    letter-spacing: 0.02em;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-form {
+    display: flex !important;
+    gap: 8px !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-cep-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 42px !important;
+    padding: 0 12px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    background: #fff !important;
+    font-size: 16px !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-calc-btn {
+    flex: 0 0 auto;
+    height: 42px !important;
+    padding: 0 18px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: var(--autocep-mc-accent) !important;
+    color: #fff !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    cursor: pointer;
+}
+
+/* Resumo recolhível: rótulo nunca quebra em várias linhas. */
+.autocep-mc__summary-toggle {
+    gap: 10px;
+}
+
+.autocep-mc__summary-toggle-label {
+    white-space: nowrap;
+}
+
+.autocep-mc__summary-toggle-total {
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+/* =====================================================================
+ * Ajustes v3 — campos pequenos e do mesmo tamanho
+ *
+ * Todos os campos com a mesma altura e largura (como o campo Cidade):
+ * uma coluna no celular e duas colunas iguais a partir de 600px.
+ * Textos longos (observações), caixas de seleção e títulos ocupam a
+ * linha inteira.
+ * ===================================================================== */
+
+.autocep-mc .woocommerce-billing-fields__field-wrapper,
+.autocep-mc .woocommerce-shipping-fields__field-wrapper,
+.autocep-mc .woocommerce-additional-fields__field-wrapper,
+.autocep-mc__fields {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px 12px;
+}
+
+.autocep-mc .woocommerce-billing-fields__field-wrapper > *,
+.autocep-mc .woocommerce-shipping-fields__field-wrapper > *,
+.autocep-mc .woocommerce-additional-fields__field-wrapper > *,
+.autocep-mc__fields > * {
+    width: auto !important;
+    min-width: 0;
+}
+
+.autocep-mc .form-row input.input-text,
+.autocep-mc .form-row select,
+.autocep-mc .select2-container .select2-selection--single {
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 12px !important;
+    line-height: 38px !important;
+}
+
+.autocep-mc .select2-container .select2-selection--single .select2-selection__rendered {
+    line-height: 38px !important;
+}
+
+.autocep-mc .select2-container .select2-selection--single .select2-selection__arrow {
+    height: 38px !important;
+}
+
+.autocep-mc .form-row textarea {
+    min-height: 64px;
+    padding: 8px 12px !important;
+}
+
+.autocep-mc .form-row label {
+    font-size: 12.5px;
+}
+
+@media (min-width: 600px) {
+    .autocep-mc .woocommerce-billing-fields__field-wrapper,
+    .autocep-mc .woocommerce-shipping-fields__field-wrapper,
+    .autocep-mc .woocommerce-additional-fields__field-wrapper,
+    .autocep-mc__fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    /* Linha inteira: textos longos, caixas de seleção e links "+ adicionar". */
+    .autocep-mc .form-row.notes,
+    .autocep-mc .form-row:has(textarea),
+    .autocep-mc .form-row-checkbox,
+    .autocep-mc .form-row.create-account,
+    .autocep-mc .autocep-mc__reveal,
+    .autocep-mc .woocommerce-additional-fields__field-wrapper > * {
+        grid-column: 1 / -1;
+    }
+}
+
+/* Computador: botões proporcionais aos campos menores. */
+@media (hover: hover) and (pointer: fine) {
+    .autocep-mc .form-row input.input-text,
+    .autocep-mc .form-row select,
+    .autocep-mc .form-row textarea,
+    .autocep-mc .select2-container .select2-selection--single {
+        font-size: 14px !important;
+    }
+
+    .autocep-mc-btn,
+    .autocep-mc .autocep-mc-btn,
+    .autocep-mc #place_order {
+        min-height: 42px;
+        font-size: 15px !important;
+    }
+}
+
+/* =====================================================================
+ * Simulador de frete dentro do checkout — visual moderno
+ * ===================================================================== */
+
+.autocep-mc .autocep-mc__simulator {
+    padding: 14px !important;
+    border: 1px solid color-mix(in srgb, var(--autocep-mc-accent) 25%, #fff) !important;
+    border-radius: 12px !important;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--autocep-mc-accent) 7%, #fff), #fff) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 10px !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 12px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-title strong {
+    color: inherit !important;
+}
+
+/* Barra de frete grátis mais discreta. */
+.autocep-mc .autocep-mc__simulator .autocep-free-shipping-bar-wrap {
+    margin: 0 0 10px !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-free-shipping-bar-track {
+    height: 6px !important;
+    border-radius: 99px !important;
+    background: var(--autocep-mc-border) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-free-shipping-bar-fill {
+    border-radius: 99px !important;
+    background: var(--autocep-mc-accent) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-free-shipping-bar-message {
+    margin-top: 6px !important;
+    font-size: 12.5px !important;
+    color: var(--autocep-mc-text) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-cep-input {
+    height: 40px !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-calc-btn {
+    height: 40px !important;
+    text-transform: none !important;
+}
+
+/* Lista de opções do simulador em cartões, como as formas de entrega. */
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rates-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-item {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 !important;
+    padding: 10px 12px !important;
+    border: 1px solid var(--autocep-mc-border) !important;
+    border-radius: 10px !important;
+    background: #fff !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-label {
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-delivery {
+    font-size: 12px !important;
+    color: var(--autocep-mc-muted) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-cost {
+    font-weight: 700 !important;
+    color: var(--autocep-mc-text) !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-select-btn {
+    padding: 6px 12px !important;
+    border: 1px solid var(--autocep-mc-accent) !important;
+    border-radius: 8px !important;
+    background: #fff !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-select-btn:hover {
+    background: var(--autocep-mc-accent) !important;
+    color: #fff !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-cep-link {
+    margin: 8px 0 0 !important;
+    font-size: 12px !important;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-item {
+    flex-wrap: wrap;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-info {
+    display: flex !important;
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.autocep-mc .autocep-mc__simulator .autocep-shipping-rate-instructions-text {
+    flex-basis: 100%;
+    margin: 0 !important;
+    font-size: 12px !important;
+}
+
+/* Modo compacto: campos recolhidos ficam escondidos mesmo quando o
+   contêiner é uma grade (seletor reforçado de propósito). */
+.autocep-mc .autocep-mc-collapsed.autocep-mc-collapsed {
+    display: none !important;
+}
+
+/* =====================================================================
+ * Ajustes v4 — formulário compacto (estilo Fluid Checkout)
+ * ===================================================================== */
+
+/* Divisórias invisíveis que o WooCommerce e plugins de campos inserem
+   entre os campos (<div class="clear">): na grade, cada uma ocupava uma
+   vaga e deixava um buraco antes do campo seguinte. */
+.autocep-mc .autocep-mc__panel .clear,
+.autocep-mc .autocep-mc__panel div.clear {
+    display: none !important;
+}
+
+/* Toda linha de campo ocupa exatamente uma célula da grade — vence as
+   larguras "metade" de form-row-first/last (do WooCommerce e do tema). */
+.autocep-mc .autocep-mc__panel .form-row,
+.autocep-mc .autocep-mc__panel .form-row-first,
+.autocep-mc .autocep-mc__panel .form-row-last,
+.autocep-mc .autocep-mc__panel .form-row-wide {
+    width: auto !important;
+    max-width: none !important;
+    float: none !important;
+    clear: none !important;
+}
+
+/* O pagamento continua com o próprio layout (número / validade + CVV). */
+.autocep-mc #payment .payment_box .form-row-first,
+.autocep-mc #payment .payment_box .form-row-last {
+    width: calc(50% - 6px) !important;
+}
+
+.autocep-mc #payment .payment_box .form-row-wide {
+    width: 100% !important;
+}
+
+/* Campos e rótulos mais compactos. */
+.autocep-mc .autocep-mc__panel .form-row input.input-text,
+.autocep-mc .autocep-mc__panel .form-row select,
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single {
+    height: 38px !important;
+    min-height: 38px !important;
+    line-height: 36px !important;
+    border-radius: 6px !important;
+}
+
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single .select2-selection__rendered {
+    line-height: 36px !important;
+}
+
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single .select2-selection__arrow {
+    height: 36px !important;
+}
+
+.autocep-mc .autocep-mc__panel .form-row label {
+    margin-bottom: 3px !important;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.autocep-mc .woocommerce-billing-fields__field-wrapper,
+.autocep-mc .woocommerce-shipping-fields__field-wrapper,
+.autocep-mc .woocommerce-additional-fields__field-wrapper,
+.autocep-mc__fields {
+    gap: 8px 10px !important;
+}
+
+.autocep-mc .autocep-mc__panel-title {
+    margin-bottom: 12px !important;
+    font-size: 16px !important;
+}
+
+.autocep-mc .autocep-mc__panel-num {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+}
+
+.autocep-mc__progress-num {
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
+}
+
+.autocep-mc__progress-item + .autocep-mc__progress-item::before {
+    top: 13px;
+}
+
+.autocep-mc__progress-btn {
+    font-size: 12px !important;
+}
+
+/* Formulário mais estreito e centralizado, com o resumo ao lado. */
+@media (min-width: 600px) {
+    .autocep-mc__panel {
+        padding: 18px 20px;
+    }
+}
+
+@media (min-width: 992px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, 580px) 340px;
+        justify-content: center;
+        gap: 28px;
+    }
+
+    .autocep-mc__summary {
+        padding: 16px 18px;
+    }
+
+    .autocep-mc__summary table.shop_table {
+        font-size: 13px;
+    }
+}
+
+@media (min-width: 1400px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, 620px) 360px;
+    }
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .autocep-mc .autocep-mc__panel .form-row input.input-text,
+    .autocep-mc .autocep-mc__panel .form-row select,
+    .autocep-mc .autocep-mc__panel .form-row textarea,
+    .autocep-mc .autocep-mc__panel .select2-container .select2-selection--single {
+        font-size: 14px !important;
+    }
+
+    .autocep-mc .autocep-mc__nav .autocep-mc-btn {
+        min-height: 40px;
+        min-width: 180px;
+        font-size: 14px !important;
+    }
+}
+
+/* =====================================================================
+ * Ajustes v5 — alinhamento e cupom no resumo
+ * ===================================================================== */
+
+/* Celular: resumo (recolhível) → barra de etapas → formulário.
+   Computador: barra de etapas em cima; formulário e resumo começam na
+   mesma altura, lado a lado. */
+.autocep-mc {
+    grid-template-areas: "summary" "progress" "main";
+    row-gap: 14px;
+}
+
+.autocep-mc__progress {
+    grid-area: progress;
+    margin: 0 !important;
+}
+
+.autocep-mc__main {
+    grid-area: main;
+    min-width: 0;
+}
+
+.autocep-mc__summary {
+    grid-area: summary;
+    order: 0;
+}
+
+@media (min-width: 992px) {
+    .autocep-mc {
+        grid-template-areas:
+            "progress ."
+            "main     summary";
+        row-gap: 16px;
+    }
+
+    .autocep-mc__summary {
+        align-self: start;
+    }
+}
+
+/* Cupom de desconto dentro do resumo. */
+.autocep-mc__coupon {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--autocep-mc-border);
+}
+
+.autocep-mc__coupon-toggle {
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    text-transform: none !important;
+    cursor: pointer;
+}
+
+.autocep-mc__coupon-toggle:hover {
+    text-decoration: underline;
+}
+
+.autocep-mc__coupon-toggle[hidden],
+.autocep-mc__coupon-row[hidden],
+.autocep-mc__coupon-msg[hidden] {
+    display: none !important;
+}
+
+.autocep-mc__coupon-row {
+    display: flex;
+    gap: 8px;
+}
+
+.autocep-mc__coupon-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px !important;
+    margin: 0 !important;
+    padding: 0 10px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    font-size: 16px !important;
+    text-transform: uppercase;
+}
+
+.autocep-mc__coupon-input:focus {
+    outline: none !important;
+    border-color: var(--autocep-mc-accent) !important;
+}
+
+.autocep-mc__coupon-apply {
+    flex: 0 0 auto;
+    height: 38px !important;
+    margin: 0 !important;
+    padding: 0 16px !important;
+    border: 1px solid var(--autocep-mc-accent) !important;
+    border-radius: 6px !important;
+    background: #fff !important;
+    color: var(--autocep-mc-accent) !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    text-transform: none !important;
+    cursor: pointer;
+}
+
+.autocep-mc__coupon-apply:hover {
+    background: var(--autocep-mc-accent) !important;
+    color: #fff !important;
+}
+
+.autocep-mc__coupon-apply.is-loading {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.autocep-mc__coupon-msg {
+    margin: 6px 0 0 !important;
+    font-size: 12.5px;
+}
+
+.autocep-mc__coupon-msg.is-error {
+    color: var(--autocep-mc-danger);
+}
+
+.autocep-mc__coupon-msg.is-success {
+    color: #15803d;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .autocep-mc__coupon-input {
+        font-size: 14px !important;
+    }
+}
+
+.autocep-mc__coupon-input::placeholder {
+    text-transform: none;
+}
+
+/* Aviso de criação de conta (etapa Identificação). */
+.autocep-mc__account-notice {
+    margin: 14px 0 10px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--autocep-mc-accent) 25%, #fff);
+    border-left: 4px solid var(--autocep-mc-accent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--autocep-mc-accent) 6%, #fff);
+}
+
+.autocep-mc__account-title {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13.5px;
+    color: var(--autocep-mc-text);
+}
+
+.autocep-mc__account-title::before {
+    content: "👤 ";
+}
+
+.autocep-mc__account-text {
+    margin: 0 0 6px !important;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #374151;
+}
+
+.autocep-mc__account-login {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--autocep-mc-accent) !important;
+    text-decoration: none !important;
+}
+
+.autocep-mc__account-login:hover {
+    text-decoration: underline !important;
+}
+
+.autocep-mc .woocommerce-account-fields {
+    margin-top: 4px;
+}
+
+/* E-mail digitado dentro do aviso de conta. */
+.autocep-mc__account-email {
+    color: var(--autocep-mc-text);
+    word-break: break-all;
+}
+
+.autocep-mc__account-login[hidden],
+.autocep-mc__login[hidden],
+.autocep-mc__login-error[hidden] {
+    display: none !important;
+}
+
+/* "Já tem conta? Entrar" no topo da etapa (quando não há aviso de conta). */
+.autocep-mc__login-link {
+    display: inline-block;
+    margin: 0 0 12px;
+}
+
+/* Login dentro da etapa 1. */
+.autocep-mc__login {
+    margin: 0 0 14px;
+    padding: 14px;
+    border: 1px solid var(--autocep-mc-border);
+    border-radius: 8px;
+    background: var(--autocep-mc-soft);
+}
+
+.autocep-mc__login-title {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.autocep-mc__login-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+}
+
+@media (min-width: 600px) {
+    .autocep-mc__login-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.autocep-mc .autocep-mc__login-input {
+    width: 100% !important;
+    height: 38px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    font-size: 16px !important;
+}
+
+.autocep-mc .autocep-mc__login-input:focus {
+    outline: none !important;
+    border-color: var(--autocep-mc-accent) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .autocep-mc .autocep-mc__login-input {
+        font-size: 14px !important;
+    }
+}
+
+.autocep-mc__login-remember {
+    display: flex !important;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 0 !important;
+    font-size: 13px;
+    font-weight: 400 !important;
+}
+
+.autocep-mc__login-error {
+    margin: 8px 0 0 !important;
+    font-size: 13px;
+    color: var(--autocep-mc-danger);
+}
+
+.autocep-mc__login-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.autocep-mc .autocep-mc__login-submit {
+    width: auto;
+    min-width: 120px;
+    min-height: 38px;
+    padding: 8px 18px !important;
+    font-size: 14px !important;
+}
+
+.autocep-mc__login-cancel {
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: var(--autocep-mc-muted) !important;
+    font-size: 13px !important;
+    text-transform: none !important;
+    cursor: pointer;
+}
+
+.autocep-mc__login-lost {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--autocep-mc-accent) !important;
+}
+
+/* =====================================================================
+ * Ajustes v6
+ * ===================================================================== */
+
+/* Select2 (ex.: "Tipo de Pessoa" do plugin de CPF/CNPJ) esconde o <select>
+   original reduzindo-o a 1px. As regras de tamanho dos campos acima não
+   podem valer para ele: com largura 100% ele ficava com 1230px e empurrava
+   a página inteira para o lado (rolagem horizontal). */
+.autocep-mc .autocep-mc__panel .form-row select.select2-hidden-accessible,
+.autocep-mc .form-row select.select2-hidden-accessible,
+.autocep-mc select.select2-hidden-accessible {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    min-height: 0 !important;
+    margin: -1px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+}
+
+/* O e-mail no aviso de conta só quebra se não couber (antes quebrava no
+   meio da palavra: "informado acim / a"). Sem e-mail digitado, o texto
+   "informado acima" fica normal, sem negrito. */
+.autocep-mc__account-email {
+    word-break: normal;
+    overflow-wrap: anywhere;
+}
+
+.autocep-mc__account-email.is-empty {
+    font-weight: inherit;
+    color: inherit;
+}
+
+/* Tamanho do checkout (personalizável na aba Checkout): largura do
+   formulário, largura do resumo e altura dos campos. */
+@media (min-width: 992px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, var(--autocep-mc-form-w, 580px)) var(--autocep-mc-summary-w, 340px);
+    }
+}
+
+@media (min-width: 1400px) {
+    .autocep-mc {
+        grid-template-columns: minmax(0, var(--autocep-mc-form-w, 620px)) var(--autocep-mc-summary-w, 360px);
+    }
+}
+
+.autocep-mc .autocep-mc__panel .form-row input.input-text,
+.autocep-mc .autocep-mc__panel .form-row select,
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single {
+    height: var(--autocep-mc-field-h, 38px) !important;
+    min-height: var(--autocep-mc-field-h, 38px) !important;
+    line-height: calc(var(--autocep-mc-field-h, 38px) - 2px) !important;
+}
+
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single .select2-selection__rendered {
+    line-height: calc(var(--autocep-mc-field-h, 38px) - 2px) !important;
+}
+
+.autocep-mc .autocep-mc__panel .select2-container .select2-selection--single .select2-selection__arrow {
+    height: calc(var(--autocep-mc-field-h, 38px) - 2px) !important;
+}
+
+/* Segurança extra contra estouro de largura vindo de outros plugins. */
+.autocep-mc,
+.autocep-mc__main,
+.autocep-mc__panel,
+.autocep-mc__panel-body {
+    max-width: 100%;
+    min-width: 0;
+}
+
+/* =====================================================================
+ * Ajustes v7 — "Entregar em um endereço diferente"
+ * ===================================================================== */
+
+/* O contêiner do endereço de entrega estava em "flex" (regra antiga) e
+   espremia a grade de campos, deixando-os mais estreitos que os da
+   cobrança. Bloco normal: a grade ocupa a largura toda. Quando o cliente
+   desmarca a opção, o WooCommerce esconde o bloco com display:none inline. */
+.autocep-mc .shipping_address {
+    display: block;
+    width: 100%;
+}
+
+/* Linhas vazias que temas/plugins colocam entre os campos (ex.: <p></p>)
+   não ocupam vaga na grade. */
+.autocep-mc .autocep-mc__empty-cell {
+    display: none !important;
+}

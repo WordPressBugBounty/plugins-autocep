@@ -10,6 +10,11 @@ class AutoCEP_Maps_Service
 
     const CACHE_PREFIX = 'autocep_km_dist_';
 
+    // "Pausa" das consultas ao Google após uma falha de conexão/timeout.
+    const PAUSE_KEY = 'autocep_maps_pausa';
+
+    const PAUSE_SECONDS = 10 * MINUTE_IN_SECONDS;
+
     public $ultima_fonte = null;
 
     private $logger;
@@ -69,19 +74,29 @@ class AutoCEP_Maps_Service
             return new WP_Error('autocep_maps_no_key', __('A Chave de API do Google Maps não está configurada em AutoCEP > Retirada em Loja.', 'autocep'));
         }
 
-        $resultado = $this->consultar_distancia(
-            $this->build_geocoding_query($cep_origem),
-            $this->build_geocoding_query($cep_destino),
-            $api_key,
-            $cep_origem,
-            $cep_destino
-        );
+        // Google em pausa (falhou por conexão há pouco): vai direto para a
+        // estimativa por linha reta, sem esperar novos timeouts.
+        $google_em_pausa = (bool) get_transient(self::PAUSE_KEY);
+
+        if ($google_em_pausa) {
+            $resultado = new WP_Error('autocep_maps_paused', __('Google Maps temporariamente em pausa após falha de conexão.', 'autocep'));
+        } else {
+            $resultado = $this->consultar_distancia(
+                $this->build_geocoding_query($cep_origem),
+                $this->build_geocoding_query($cep_destino),
+                $api_key,
+                $cep_origem,
+                $cep_destino
+            );
+        }
 
         if (!is_wp_error($resultado)) {
             $this->ultima_fonte = 'google_maps_endereco';
         }
 
-        if (is_wp_error($resultado)) {
+        // A segunda tentativa (só cidade) resolve CEPs que o Google não
+        // encontra, mas não adianta se a falha foi de conexão.
+        if (is_wp_error($resultado) && !$google_em_pausa && 'http_request_failed' !== $resultado->get_error_code()) {
             $query_origem_simples  = $this->build_city_query($cep_origem);
             $query_destino_simples = $this->build_city_query($cep_destino);
 
@@ -192,7 +207,7 @@ class AutoCEP_Maps_Service
         $response = wp_remote_get(
             $url,
             array(
-                'timeout' => 8,
+                'timeout' => 5,
                 'headers' => array(
                     'User-Agent' => 'AutoCEP-Plugin/2.7 (WooCommerce shipping plugin; contact: autocep)',
                 ),
@@ -232,9 +247,13 @@ class AutoCEP_Maps_Service
             'https://maps.googleapis.com/maps/api/distancematrix/json'
         );
 
-        $response = wp_remote_get($url, array('timeout' => 12));
+        $response = wp_remote_get($url, array('timeout' => 6));
 
         if (is_wp_error($response)) {
+            // Google fora do ar/lento: pausa as consultas por alguns minutos
+            // e usa direto a estimativa, sem cada cliente esperar o timeout.
+            set_transient(self::PAUSE_KEY, 1, self::PAUSE_SECONDS);
+
             $this->log_falha('Falha de conexão com a API do Google Maps: ' . $response->get_error_message(), $cep_origem_log, $cep_destino_log);
 
             return $response;
